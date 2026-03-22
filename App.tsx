@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  StyleSheet, Text, View, SafeAreaView,
-  ImageBackground, Modal, ScrollView, TextInput, Alert, Dimensions
+  StyleSheet, Text, View, SafeAreaView, Platform,
+  ImageBackground, Modal, ScrollView, TextInput, Alert, Dimensions, TouchableOpacity
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Circle, Rect, Line, Text as SvgText, G } from 'react-native-svg';
@@ -83,7 +83,7 @@ const formatDateHebrew = (dateStr: string) => {
 };
 
 function WeeklyChart({ data, goalHours }: { data: DayHistory[], goalHours: number }) {
-  const chartWidth = SCREEN_WIDTH - 80;
+  const chartWidth = Math.min(SCREEN_WIDTH - 80, 340);
   const chartHeight = 120;
   const maxVal = Math.max(goalHours * 3600, ...data.map(d => d.totalSleep));
   const barWidth = (chartWidth / 7) * 0.6;
@@ -173,10 +173,7 @@ export default function App() {
 
   const backupToFirebase = async (h: DayHistory[]) => {
     try {
-      await setDoc(doc(db, 'babies', BABY_ID), {
-        lastBackup: new Date().toISOString(),
-        history: h,
-      });
+      await setDoc(doc(db, 'babies', BABY_ID), { lastBackup: new Date().toISOString(), history: h });
     } catch (e) { console.error(e); }
   };
 
@@ -424,11 +421,183 @@ export default function App() {
   const strokeDashoffset = CIRCUMFERENCE * (1 - sleepProgress);
   const ringColor = sleepProgress >= 1 ? '#2ecc71' : '#3498DB';
 
+  const bgColor = isSleeping ? '#1a1a4e' : '#1a3a4e';
+
   if (!isLoaded) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
         <Text style={styles.loadingText}>טוען...</Text>
       </SafeAreaView>
+    );
+  }
+
+  const MainContent = () => (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity onPress={() => setShowEvents(true)} style={styles.headerBtn}>
+            <Text style={styles.headerBtnText}>🕐</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowHistory(true)} style={styles.calendarBtn}>
+            <Text style={styles.calendarMonth}>{['ינו','פבר','מרץ','אפר','מאי','יוני','יולי','אוג','ספט','אוק','נוב','דצמ'][new Date().getMonth()]}</Text>
+            <Text style={styles.calendarDay}>{new Date().getDate()}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.headerBtn}>
+            <Text style={styles.headerBtnText}>⚙️</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.titleBubble}>
+        <Text style={styles.titleBubbleText}>לוח השינה של מאיר שלי 👶</Text>
+      </View>
+
+      <View style={styles.statusContainer}>
+        <Text style={styles.label}>{isSleeping ? 'ישן עכשיו:' : 'חלון ערות:'}</Text>
+        <Text style={styles.mainTimer}>{isSleeping ? formatTime(displaySleepTime) : formatTime(displayWakeTime)}</Text>
+        {!isSleeping && lastSleepDuration > 0 && <Text style={styles.subText}>ישן בפעם הקודמת: {formatTime(lastSleepDuration)}</Text>}
+      </View>
+
+      <View style={styles.ringContainer}>
+        <Svg width={RING_SIZE} height={RING_SIZE} style={styles.svg}>
+          <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke="rgba(255,255,255,0.3)" strokeWidth={STROKE_WIDTH} fill="transparent" />
+          <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke={ringColor} strokeWidth={STROKE_WIDTH} fill="transparent" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={strokeDashoffset} strokeLinecap="round" rotation="-90" origin={`${RING_SIZE/2}, ${RING_SIZE/2}`} />
+        </Svg>
+        <TouchableOpacity onPress={handleSleepPress} style={[styles.mainButton, isSleeping ? styles.wakeButton : styles.sleepButton]}>
+          <Animated.View style={[sleepAnimStyle, { alignItems: 'center' }]}>
+            <Text style={styles.mainButtonText}>{isSleeping ? 'התעורר!' : 'נרדם'}</Text>
+            <Text style={styles.sleepProgressText}>{formatTime(displayTotalSleep)} / {sleepGoalHours}:00:00</Text>
+          </Animated.View>
+        </TouchableOpacity>
+      </View>
+
+      {!isSleeping && (
+        <View style={styles.playContainer}>
+          <View style={styles.playHeader}>
+            <Text style={styles.label}>סה״כ פעילות היום:</Text>
+            {playGoalHours > 0 && <Text style={styles.goalText}>מטרה: {playGoalHours} שעות</Text>}
+          </View>
+          <Text style={[styles.playTimer, displayPlayTime >= PLAY_GOAL_SECONDS && { color: '#2ecc71' }]}>{formatTime(displayPlayTime)}</Text>
+          <TouchableOpacity onPress={handlePlayPress} style={[styles.playButton, isPlaying ? styles.stopPlayButton : styles.startPlayButton]}>
+            <Animated.View style={playAnimStyle}>
+              <Text style={styles.playButtonText}>{isPlaying ? 'הפסק פעילות' : 'התחל פעילות'}</Text>
+            </Animated.View>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* יומן */}
+      <Modal visible={showEvents} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>🕐 יומן שינה</Text>
+            {sleepEvents.length === 0 ? <Text style={styles.emptyHistory}>אין אירועים עדיין</Text> : (
+              <ScrollView style={{ maxHeight: 400 }}>
+                {sleepEvents.map((event, i) => (
+                  <View key={i} style={[styles.eventRow, { borderRightWidth: 4, borderRightColor: event.type === 'נרדם' ? '#3498DB' : '#F1C40F' }]}>
+                    <Text style={styles.eventType}>{event.type === 'נרדם' ? '😴 נרדם' : `☀️ התעורר${event.duration ? ` — ${event.duration}` : ''}`}</Text>
+                    <Text style={styles.eventTime}>{event.time}</Text>
+                    <Text style={styles.eventDate}>{event.date}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+            <TouchableOpacity onPress={() => setShowEvents(false)} style={styles.cancelBtnView}>
+              <Text style={styles.cancelBtnText}>סגור</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* היסטוריה */}
+      <Modal visible={showHistory} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <ScrollView contentContainerStyle={styles.statsModalContent}>
+            <View style={styles.statsBox}>
+              <Text style={styles.statsTitle}>📊 סטטיסטיקות שינה</Text>
+              <View style={styles.statsCards}>
+                <View style={styles.statCard}>
+                  <Text style={styles.statCardNum}>{formatHoursDecimal(avgSleepSeconds)}</Text>
+                  <Text style={styles.statCardLabel}>שעות{'\n'}ממוצע יומי</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statCardNum}>{avgSleepCount.toFixed(1)}</Text>
+                  <Text style={styles.statCardLabel}>שינות{'\n'}ממוצע יומי</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statCardNum}>{mostCommonHour !== null ? `${mostCommonHour}:00` : '--'}</Text>
+                  <Text style={styles.statCardLabel}>שעה{'\n'}נפוצה לשינה</Text>
+                </View>
+              </View>
+              <Text style={styles.chartTitle}>שינה שבועית</Text>
+              <View style={styles.chartLegend}>
+                <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#2ecc71' }]} /><Text style={styles.legendText}>הגיע למטרה</Text></View>
+                <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#3498DB' }]} /><Text style={styles.legendText}>לא הגיע</Text></View>
+              </View>
+              {history.length === 0 ? <Text style={styles.emptyHistoryDark}>אין נתונים עדיין</Text> : <WeeklyChart data={history} goalHours={sleepGoalHours} />}
+              <Text style={styles.chartTitle}>פירוט ימים</Text>
+              {history.length === 0 ? <Text style={styles.emptyHistoryDark}>הנתונים יישמרו בסוף כל יום</Text> : (
+                history.map((day, i) => (
+                  <View key={i} style={styles.historyRow}>
+                    <Text style={styles.historyDate}>{formatDateHebrew(day.date)}</Text>
+                    <View style={styles.historyStats}>
+                      <View style={styles.historyStat}>
+                        <Text style={[styles.historyStatNum, day.totalSleep >= sleepGoalHours * 3600 && { color: '#2ecc71' }]}>{formatTime(day.totalSleep)}</Text>
+                        <Text style={styles.historyStatLabel}>שינה</Text>
+                      </View>
+                      <View style={styles.historyStat}>
+                        <Text style={styles.historyStatNum}>{day.sleepCount}</Text>
+                        <Text style={styles.historyStatLabel}>פעמים</Text>
+                      </View>
+                      <View style={styles.historyStat}>
+                        <Text style={styles.historyStatNum}>{formatTime(day.totalPlay)}</Text>
+                        <Text style={styles.historyStatLabel}>פעילות</Text>
+                      </View>
+                    </View>
+                  </View>
+                ))
+              )}
+              <TouchableOpacity onPress={() => setShowHistory(false)} style={styles.cancelBtnDarkView}>
+                <Text style={styles.cancelBtnDarkText}>סגור</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* הגדרות */}
+      <Modal visible={showSettings} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>⚙️ הגדרות</Text>
+            <ScrollView>
+              <Text style={styles.settingLabel}>שם התינוק</Text>
+              <TextInput style={styles.input} value={tempBabyName} onChangeText={setTempBabyName} placeholder="שם התינוק" />
+              <Text style={styles.settingLabel}>מטרת שינה יומית (שעות)</Text>
+              <TextInput style={styles.input} value={tempSleepGoal} onChangeText={setTempSleepGoal} keyboardType="numeric" placeholder="15" />
+              <Text style={styles.settingLabel}>מטרת פעילות יומית (שעות)</Text>
+              <TextInput style={styles.input} value={tempPlayGoal} onChangeText={setTempPlayGoal} keyboardType="numeric" placeholder="3" />
+              <Text style={styles.settingLabel}>שעת איפוס יומי (0-23)</Text>
+              <TextInput style={styles.input} value={tempResetHour} onChangeText={setTempResetHour} keyboardType="numeric" placeholder="20" />
+              <Text style={styles.sectionTitle}>איפוס נתונים</Text>
+              <TouchableOpacity onPress={resetSleep} style={styles.resetBtnView}><Text style={styles.resetBtnText}>איפוס נתוני שינה בלבד</Text></TouchableOpacity>
+              <TouchableOpacity onPress={resetPlay} style={styles.resetBtnView}><Text style={styles.resetBtnText}>איפוס נתוני פעילות בלבד</Text></TouchableOpacity>
+              <TouchableOpacity onPress={resetHistoryAndEvents} style={[styles.resetBtnView, styles.resetAllBtnView]}><Text style={styles.resetBtnText}>איפוס יומן והיסטוריה</Text></TouchableOpacity>
+              <TouchableOpacity onPress={resetAll} style={[styles.resetBtnView, styles.resetAllBtnView]}><Text style={styles.resetBtnText}>איפוס כל הנתונים</Text></TouchableOpacity>
+              <TouchableOpacity onPress={saveSettings} style={styles.saveBtnView}><Text style={styles.saveBtnText}>שמור הגדרות ✓</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowSettings(false)} style={styles.cancelBtnView}><Text style={styles.cancelBtnText}>ביטול</Text></TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.webContainer, { backgroundColor: bgColor }]}>
+        <MainContent />
+      </View>
     );
   }
 
@@ -438,176 +607,21 @@ export default function App() {
       style={styles.background} resizeMode="cover"
     >
       <View style={styles.overlay} />
-      <SafeAreaView style={styles.container}>
-
-        <View style={styles.header}>
-          <View style={styles.headerButtons}>
-            <Text style={styles.headerBtnText} onPress={() => setShowEvents(true)}>🕐</Text>
-            <View onTouchEnd={() => setShowHistory(true)} style={styles.calendarBtn}>
-              <Text style={styles.calendarMonth}>{['ינו','פבר','מרץ','אפר','מאי','יוני','יולי','אוג','ספט','אוק','נוב','דצמ'][new Date().getMonth()]}</Text>
-              <Text style={styles.calendarDay}>{new Date().getDate()}</Text>
-            </View>
-            <Text style={styles.headerBtnText} onPress={() => setShowSettings(true)}>⚙️</Text>
-          </View>
-        </View>
-
-        <View style={styles.titleBubble}>
-          <Text style={styles.titleBubbleText}>לוח השינה של מאיר שלי 👶</Text>
-        </View>
-
-        <View style={styles.statusContainer}>
-          <Text style={styles.label}>{isSleeping ? 'ישן עכשיו:' : 'חלון ערות:'}</Text>
-          <Text style={styles.mainTimer}>{isSleeping ? formatTime(displaySleepTime) : formatTime(displayWakeTime)}</Text>
-          {!isSleeping && lastSleepDuration > 0 && <Text style={styles.subText}>ישן בפעם הקודמת: {formatTime(lastSleepDuration)}</Text>}
-        </View>
-
-        <View style={styles.ringContainer}>
-          <Svg width={RING_SIZE} height={RING_SIZE} style={styles.svg}>
-            <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke="rgba(255,255,255,0.3)" strokeWidth={STROKE_WIDTH} fill="transparent" />
-            <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke={ringColor} strokeWidth={STROKE_WIDTH} fill="transparent" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={strokeDashoffset} strokeLinecap="round" rotation="-90" origin={`${RING_SIZE/2}, ${RING_SIZE/2}`} />
-          </Svg>
-          <Animated.View style={[styles.mainButton, isSleeping ? styles.wakeButton : styles.sleepButton, sleepAnimStyle]} onTouchEnd={handleSleepPress}>
-            <Text style={styles.mainButtonText}>{isSleeping ? 'התעורר!' : 'נרדם'}</Text>
-            <Text style={styles.sleepProgressText}>{formatTime(displayTotalSleep)} / {sleepGoalHours}:00:00</Text>
-          </Animated.View>
-        </View>
-
-        {!isSleeping && (
-          <View style={styles.playContainer}>
-            <View style={styles.playHeader}>
-              <Text style={styles.label}>סה״כ פעילות היום:</Text>
-              {playGoalHours > 0 && <Text style={styles.goalText}>מטרה: {playGoalHours} שעות</Text>}
-            </View>
-            <Text style={[styles.playTimer, displayPlayTime >= PLAY_GOAL_SECONDS && { color: '#2ecc71' }]}>{formatTime(displayPlayTime)}</Text>
-            <Animated.View style={[styles.playButton, isPlaying ? styles.stopPlayButton : styles.startPlayButton, playAnimStyle]} onTouchEnd={handlePlayPress}>
-              <Text style={styles.playButtonText}>{isPlaying ? 'הפסק פעילות' : 'התחל פעילות'}</Text>
-            </Animated.View>
-          </View>
-        )}
-
-        <Modal visible={showEvents} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalBox}>
-              <Text style={styles.modalTitle}>🕐 יומן שינה</Text>
-              {sleepEvents.length === 0 ? <Text style={styles.emptyHistory}>אין אירועים עדיין</Text> : (
-                <ScrollView style={{ maxHeight: 400 }}>
-                  {sleepEvents.map((event, i) => (
-                    <View key={i} style={[styles.eventRow, { borderRightWidth: 4, borderRightColor: event.type === 'נרדם' ? '#3498DB' : '#F1C40F' }]}>
-                      <Text style={styles.eventType}>{event.type === 'נרדם' ? '😴 נרדם' : `☀️ התעורר${event.duration ? ` — ${event.duration}` : ''}`}</Text>
-                      <Text style={styles.eventTime}>{event.time}</Text>
-                      <Text style={styles.eventDate}>{event.date}</Text>
-                    </View>
-                  ))}
-                </ScrollView>
-              )}
-              <Text style={styles.cancelBtn} onPress={() => setShowEvents(false)}>סגור</Text>
-            </View>
-          </View>
-        </Modal>
-
-        <Modal visible={showHistory} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <ScrollView contentContainerStyle={styles.statsModalContent}>
-              <View style={styles.statsBox}>
-                <Text style={styles.statsTitle}>📊 סטטיסטיקות שינה</Text>
-                <View style={styles.statsCards}>
-                  <View style={styles.statCard}>
-                    <Text style={styles.statCardNum}>{formatHoursDecimal(avgSleepSeconds)}</Text>
-                    <Text style={styles.statCardLabel}>שעות{'\n'}ממוצע יומי</Text>
-                  </View>
-                  <View style={styles.statCard}>
-                    <Text style={styles.statCardNum}>{avgSleepCount.toFixed(1)}</Text>
-                    <Text style={styles.statCardLabel}>שינות{'\n'}ממוצע יומי</Text>
-                  </View>
-                  <View style={styles.statCard}>
-                    <Text style={styles.statCardNum}>{mostCommonHour !== null ? `${mostCommonHour}:00` : '--'}</Text>
-                    <Text style={styles.statCardLabel}>שעה{'\n'}נפוצה לשינה</Text>
-                  </View>
-                </View>
-                <Text style={styles.chartTitle}>שינה שבועית (שעות)</Text>
-                <View style={styles.chartLegend}>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#2ecc71' }]} />
-                    <Text style={styles.legendText}>הגיע למטרה</Text>
-                  </View>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#3498DB' }]} />
-                    <Text style={styles.legendText}>לא הגיע</Text>
-                  </View>
-                </View>
-                {history.length === 0 ? (
-                  <Text style={styles.emptyHistoryDark}>אין נתונים עדיין</Text>
-                ) : (
-                  <WeeklyChart data={history} goalHours={sleepGoalHours} />
-                )}
-                <Text style={styles.chartTitle}>פירוט ימים</Text>
-                {history.length === 0 ? (
-                  <Text style={styles.emptyHistoryDark}>הנתונים יישמרו בסוף כל יום</Text>
-                ) : (
-                  history.map((day, i) => (
-                    <View key={i} style={styles.historyRow}>
-                      <Text style={styles.historyDate}>{formatDateHebrew(day.date)}</Text>
-                      <View style={styles.historyStats}>
-                        <View style={styles.historyStat}>
-                          <Text style={[styles.historyStatNum, day.totalSleep >= sleepGoalHours * 3600 && { color: '#2ecc71' }]}>{formatTime(day.totalSleep)}</Text>
-                          <Text style={styles.historyStatLabel}>שינה</Text>
-                        </View>
-                        <View style={styles.historyStat}>
-                          <Text style={styles.historyStatNum}>{day.sleepCount}</Text>
-                          <Text style={styles.historyStatLabel}>פעמים</Text>
-                        </View>
-                        <View style={styles.historyStat}>
-                          <Text style={styles.historyStatNum}>{formatTime(day.totalPlay)}</Text>
-                          <Text style={styles.historyStatLabel}>פעילות</Text>
-                        </View>
-                      </View>
-                    </View>
-                  ))
-                )}
-                <Text style={styles.cancelBtnDark} onPress={() => setShowHistory(false)}>סגור</Text>
-              </View>
-            </ScrollView>
-          </View>
-        </Modal>
-
-        <Modal visible={showSettings} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalBox}>
-              <Text style={styles.modalTitle}>⚙️ הגדרות</Text>
-              <ScrollView>
-                <Text style={styles.settingLabel}>שם התינוק</Text>
-                <TextInput style={styles.input} value={tempBabyName} onChangeText={setTempBabyName} placeholder="שם התינוק" />
-                <Text style={styles.settingLabel}>מטרת שינה יומית (שעות)</Text>
-                <TextInput style={styles.input} value={tempSleepGoal} onChangeText={setTempSleepGoal} keyboardType="numeric" placeholder="15" />
-                <Text style={styles.settingLabel}>מטרת פעילות יומית (שעות)</Text>
-                <TextInput style={styles.input} value={tempPlayGoal} onChangeText={setTempPlayGoal} keyboardType="numeric" placeholder="3" />
-                <Text style={styles.settingLabel}>שעת איפוס יומי (0-23)</Text>
-                <TextInput style={styles.input} value={tempResetHour} onChangeText={setTempResetHour} keyboardType="numeric" placeholder="20" />
-                <Text style={styles.sectionTitle}>איפוס נתונים</Text>
-                <Text style={styles.resetBtn} onPress={resetSleep}>איפוס נתוני שינה בלבד</Text>
-                <Text style={styles.resetBtn} onPress={resetPlay}>איפוס נתוני פעילות בלבד</Text>
-                <Text style={[styles.resetBtn, styles.resetAllBtn]} onPress={resetHistoryAndEvents}>איפוס יומן והיסטוריה</Text>
-                <Text style={[styles.resetBtn, styles.resetAllBtn]} onPress={resetAll}>איפוס כל הנתונים</Text>
-                <Text style={styles.saveBtn} onPress={saveSettings}>שמור הגדרות ✓</Text>
-                <Text style={styles.cancelBtn} onPress={() => setShowSettings(false)}>ביטול</Text>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-      </SafeAreaView>
+      <MainContent />
     </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   background: { flex: 1 },
+  webContainer: { flex: 1, minHeight: '100vh' as any },
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   container: { flex: 1, alignItems: 'center', paddingTop: 20 },
-  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5F9FF' },
-  loadingText: { fontSize: 24, color: '#666' },
+  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a3a4e' },
+  loadingText: { fontSize: 24, color: 'white' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', width: '90%', marginBottom: 16, marginTop: 20 },
   headerButtons: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+  headerBtn: { padding: 4 },
   headerBtnText: { fontSize: 26 },
   calendarBtn: { backgroundColor: 'white', borderRadius: 8, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   calendarMonth: { backgroundColor: '#e74c3c', color: 'white', fontSize: 9, fontWeight: 'bold', width: '100%', textAlign: 'center' },
@@ -637,7 +651,7 @@ const styles = StyleSheet.create({
   modalBox: { backgroundColor: 'white', borderRadius: 20, padding: 24, width: '88%', maxHeight: '85%' },
   modalTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
   statsModalContent: { paddingVertical: 20, paddingHorizontal: 16, alignItems: 'center', width: '100%' },
-  statsBox: { backgroundColor: '#0f0f23', borderRadius: 24, padding: 20, width: SCREEN_WIDTH - 32 },
+  statsBox: { backgroundColor: '#0f0f23', borderRadius: 24, padding: 20, width: Math.min(SCREEN_WIDTH - 32, 400) },
   statsTitle: { fontSize: 20, fontWeight: 'bold', color: 'white', textAlign: 'center', marginBottom: 20 },
   statsCards: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
   statCard: { backgroundColor: '#1a1a3e', borderRadius: 16, padding: 14, alignItems: 'center', flex: 1, marginHorizontal: 4 },
@@ -655,7 +669,8 @@ const styles = StyleSheet.create({
   historyStat: { alignItems: 'center' },
   historyStatNum: { fontSize: 16, fontWeight: 'bold', color: 'white' },
   historyStatLabel: { fontSize: 10, color: 'rgba(255,255,255,0.5)', marginTop: 2 },
-  cancelBtnDark: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, padding: 14, textAlign: 'center', marginTop: 16, color: 'rgba(255,255,255,0.7)', fontSize: 15, overflow: 'hidden' },
+  cancelBtnDarkView: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, padding: 14, alignItems: 'center', marginTop: 16 },
+  cancelBtnDarkText: { color: 'rgba(255,255,255,0.7)', fontSize: 15 },
   eventRow: { backgroundColor: '#f9f9f9', borderRadius: 10, padding: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   eventType: { fontSize: 15, fontWeight: 'bold', color: '#333', flex: 1 },
   eventTime: { fontSize: 18, fontWeight: 'bold', color: '#333', marginHorizontal: 8 },
@@ -663,9 +678,12 @@ const styles = StyleSheet.create({
   settingLabel: { fontSize: 14, color: '#666', marginBottom: 6, marginTop: 12 },
   input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, fontSize: 16, color: '#333', marginBottom: 4 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#333', marginTop: 20, marginBottom: 10 },
-  resetBtn: { backgroundColor: '#fff0f0', borderWidth: 1, borderColor: '#ffcccc', borderRadius: 10, padding: 14, marginBottom: 8, textAlign: 'center', color: '#e74c3c', fontWeight: 'bold', fontSize: 15, overflow: 'hidden' },
-  resetAllBtn: { backgroundColor: '#ffe0e0', borderColor: '#ffaaaa' },
-  saveBtn: { backgroundColor: '#3498DB', borderRadius: 10, padding: 16, textAlign: 'center', marginTop: 16, marginBottom: 8, color: 'white', fontWeight: 'bold', fontSize: 16, overflow: 'hidden' },
-  cancelBtn: { backgroundColor: '#f5f5f5', borderRadius: 10, padding: 14, textAlign: 'center', marginBottom: 8, color: '#666', fontSize: 15, overflow: 'hidden' },
+  resetBtnView: { backgroundColor: '#fff0f0', borderWidth: 1, borderColor: '#ffcccc', borderRadius: 10, padding: 14, marginBottom: 8, alignItems: 'center' },
+  resetAllBtnView: { backgroundColor: '#ffe0e0', borderColor: '#ffaaaa' },
+  resetBtnText: { color: '#e74c3c', fontWeight: 'bold', fontSize: 15 },
+  saveBtnView: { backgroundColor: '#3498DB', borderRadius: 10, padding: 16, alignItems: 'center', marginTop: 16, marginBottom: 8 },
+  saveBtnText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+  cancelBtnView: { backgroundColor: '#f5f5f5', borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 8 },
+  cancelBtnText: { color: '#666', fontSize: 15 },
   emptyHistory: { fontSize: 15, color: '#999', textAlign: 'center', marginVertical: 20, lineHeight: 24 },
 });
