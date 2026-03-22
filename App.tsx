@@ -9,7 +9,7 @@ import Animated, {
   useSharedValue, useAnimatedStyle, withSequence, withTiming
 } from 'react-native-reanimated';
 import { db } from './firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 const BABY_ID = 'maor';
 const STORAGE_KEY = 'maor_baby_state';
@@ -210,7 +210,10 @@ export default function App() {
       resetHour: resetHourRef.current,
       ...extraData,
     };
-    try { await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { console.error(e); }
+    try {
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  await setDoc(doc(db, 'babies', BABY_ID), state);
+} catch (e) { console.error(e); }
   };
 
   const applyState = (state: SavedState) => {
@@ -274,8 +277,16 @@ export default function App() {
         const savedEvents = await AsyncStorage.getItem(EVENTS_KEY);
         if (savedEvents) setSleepEvents(JSON.parse(savedEvents));
       } catch (e) { console.error(e); } finally { setIsLoaded(true); }
-    };
-    loadState();
+      }; loadState();
+      const unsubscribe = onSnapshot(doc(db, 'babies', BABY_ID), (snapshot) => {
+  if (snapshot.exists()) {
+    applyState(snapshot.data() as SavedState);
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot.data()));
+  }
+});
+return () => unsubscribe();
+    
+    
   }, []);
 
   useEffect(() => {
