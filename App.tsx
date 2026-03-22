@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, SafeAreaView, Platform,
-  ImageBackground, Modal, ScrollView, TextInput, Alert, Dimensions, TouchableOpacity
+  ImageBackground, Modal, ScrollView, TextInput, Dimensions, TouchableOpacity
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Circle, Rect, Line, Text as SvgText, G } from 'react-native-svg';
@@ -82,6 +82,19 @@ const formatDateHebrew = (dateStr: string) => {
   return `יום ${days[d.getDay()]} ${d.getDate()}/${d.getMonth()+1}`;
 };
 
+// אישור Web במקום Alert
+const webConfirm = (message: string, onConfirm: () => void) => {
+  if (Platform.OS === 'web') {
+    if (window.confirm(message)) onConfirm();
+  } else {
+    const { Alert } = require('react-native');
+    Alert.alert('אישור', message, [
+      { text: 'ביטול', style: 'cancel' },
+      { text: 'אישור', style: 'destructive', onPress: onConfirm },
+    ]);
+  }
+};
+
 function WeeklyChart({ data, goalHours }: { data: DayHistory[], goalHours: number }) {
   const chartWidth = Math.min(SCREEN_WIDTH - 80, 340);
   const chartHeight = 120;
@@ -89,7 +102,6 @@ function WeeklyChart({ data, goalHours }: { data: DayHistory[], goalHours: numbe
   const barWidth = (chartWidth / 7) * 0.6;
   const gap = (chartWidth / 7) * 0.4;
   const goalY = chartHeight - (goalHours * 3600 / maxVal) * chartHeight;
-
   const last7 = [...data].slice(0, 7).reverse();
   while (last7.length < 7) last7.unshift({ date: '', totalSleep: 0, totalPlay: 0, sleepCount: 0 });
 
@@ -106,8 +118,7 @@ function WeeklyChart({ data, goalHours }: { data: DayHistory[], goalHours: numbe
             <Rect x={x} y={y} width={barWidth} height={barH} rx={4}
               fill={day.totalSleep === 0 ? '#2a2a4a' : isGoalMet ? '#2ecc71' : '#3498DB'}
               opacity={day.totalSleep === 0 ? 0.3 : 1} />
-            <SvgText x={x + barWidth/2} y={chartHeight+16} fontSize={10}
-              fill="rgba(255,255,255,0.6)" textAnchor="middle">
+            <SvgText x={x + barWidth/2} y={chartHeight+16} fontSize={10} fill="rgba(255,255,255,0.6)" textAnchor="middle">
               {day.date ? formatDateShort(day.date) : ''}
             </SvgText>
           </G>
@@ -157,24 +168,12 @@ export default function App() {
   const playScale = useSharedValue(1);
   const playAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: playScale.value }] }));
 
-  const handleSleepPress = () => {
-    sleepScale.value = withSequence(withTiming(0.94, { duration: 80 }), withTiming(1, { duration: 80 }));
-    setTimeout(toggleSleep, 80);
-  };
-
-  const handlePlayPress = () => {
-    playScale.value = withSequence(withTiming(0.94, { duration: 80 }), withTiming(1, { duration: 80 }));
-    setTimeout(togglePlay, 80);
-  };
-
   const saveHistoryToStorage = async (newHistory: DayHistory[]) => {
     try { await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory)); } catch (e) { console.error(e); }
   };
 
   const backupToFirebase = async (h: DayHistory[]) => {
-    try {
-      await setDoc(doc(db, 'babies', BABY_ID), { lastBackup: new Date().toISOString(), history: h });
-    } catch (e) { console.error(e); }
+    try { await setDoc(doc(db, 'babies', BABY_ID), { lastBackup: new Date().toISOString(), history: h }); } catch (e) { console.error(e); }
   };
 
   const saveDayToHistory = (date: string, totalSleep: number, totalPlay: number, sleepCount: number) => {
@@ -283,7 +282,6 @@ export default function App() {
     const interval = setInterval(() => {
       const now = Date.now();
       const today = getToday(resetHourRef.current);
-
       if (today !== currentDateRef.current && currentDateRef.current !== '') {
         const updated = saveDayToHistory(currentDateRef.current, totalSleepTodayRef.current, totalPlayTodayRef.current, sleepCountTodayRef.current);
         backupToFirebase(updated);
@@ -293,7 +291,6 @@ export default function App() {
         setIsSleeping(false); setIsPlaying(false); setDisplayTotalSleep(0); setDisplayPlayTime(0);
         return;
       }
-
       if (isSleepingRef.current && sleepStartTimeRef.current) {
         const currentSleep = Math.floor((now - sleepStartTimeRef.current) / 1000);
         setDisplaySleepTime(currentSleep);
@@ -349,6 +346,16 @@ export default function App() {
     saveState();
   };
 
+  const handleSleepPress = () => {
+    sleepScale.value = withSequence(withTiming(0.94, { duration: 80 }), withTiming(1, { duration: 80 }));
+    toggleSleep();
+  };
+
+  const handlePlayPress = () => {
+    playScale.value = withSequence(withTiming(0.94, { duration: 80 }), withTiming(1, { duration: 80 }));
+    togglePlay();
+  };
+
   const saveSettings = () => {
     const newSleepGoal = parseFloat(tempSleepGoal) || 15;
     const newPlayGoal = parseFloat(tempPlayGoal) || 3;
@@ -359,57 +366,37 @@ export default function App() {
     setShowSettings(false);
   };
 
-  const resetAll = () => {
-    Alert.alert('איפוס כל הנתונים', 'האם אתה בטוח?', [
-      { text: 'ביטול', style: 'cancel' },
-      { text: 'אפס הכל', style: 'destructive', onPress: () => {
-        isSleepingRef.current = false; isPlayingRef.current = false;
-        sleepStartTimeRef.current = null; wakeStartTimeRef.current = null;
-        playStartTimeRef.current = null; totalSleepTodayRef.current = 0;
-        totalPlayTodayRef.current = 0; sleepCountTodayRef.current = 0;
-        setIsSleeping(false); setIsPlaying(false); setLastSleepDuration(0);
-        setDisplaySleepTime(0); setDisplayWakeTime(0); setDisplayPlayTime(0); setDisplayTotalSleep(0);
-        saveState();
-      }}
-    ]);
-  };
+  const resetAll = () => webConfirm('איפוס כל הנתונים — האם אתה בטוח?', () => {
+    isSleepingRef.current = false; isPlayingRef.current = false;
+    sleepStartTimeRef.current = null; wakeStartTimeRef.current = null;
+    playStartTimeRef.current = null; totalSleepTodayRef.current = 0;
+    totalPlayTodayRef.current = 0; sleepCountTodayRef.current = 0;
+    setIsSleeping(false); setIsPlaying(false); setLastSleepDuration(0);
+    setDisplaySleepTime(0); setDisplayWakeTime(0); setDisplayPlayTime(0); setDisplayTotalSleep(0);
+    saveState();
+  });
 
-  const resetSleep = () => {
-    Alert.alert('איפוס נתוני שינה', 'האם אתה בטוח?', [
-      { text: 'ביטול', style: 'cancel' },
-      { text: 'אפס', style: 'destructive', onPress: () => {
-        isSleepingRef.current = false; sleepStartTimeRef.current = null;
-        totalSleepTodayRef.current = 0; sleepCountTodayRef.current = 0;
-        setIsSleeping(false); setLastSleepDuration(0); setDisplaySleepTime(0); setDisplayTotalSleep(0);
-        saveState();
-      }}
-    ]);
-  };
+  const resetSleep = () => webConfirm('איפוס נתוני שינה — האם אתה בטוח?', () => {
+    isSleepingRef.current = false; sleepStartTimeRef.current = null;
+    totalSleepTodayRef.current = 0; sleepCountTodayRef.current = 0;
+    setIsSleeping(false); setLastSleepDuration(0); setDisplaySleepTime(0); setDisplayTotalSleep(0);
+    saveState();
+  });
 
-  const resetPlay = () => {
-    Alert.alert('איפוס נתוני פעילות', 'האם אתה בטוח?', [
-      { text: 'ביטול', style: 'cancel' },
-      { text: 'אפס', style: 'destructive', onPress: () => {
-        isPlayingRef.current = false; playStartTimeRef.current = null; totalPlayTodayRef.current = 0;
-        setIsPlaying(false); setDisplayPlayTime(0); saveState();
-      }}
-    ]);
-  };
+  const resetPlay = () => webConfirm('איפוס נתוני פעילות — האם אתה בטוח?', () => {
+    isPlayingRef.current = false; playStartTimeRef.current = null; totalPlayTodayRef.current = 0;
+    setIsPlaying(false); setDisplayPlayTime(0); saveState();
+  });
 
-  const resetHistoryAndEvents = () => {
-    Alert.alert('איפוס יומן והיסטוריה', 'האם אתה בטוח?', [
-      { text: 'ביטול', style: 'cancel' },
-      { text: 'אפס', style: 'destructive', onPress: () => {
-        historyRef.current = []; setHistory([]); setSleepEvents([]);
-        AsyncStorage.removeItem(HISTORY_KEY); AsyncStorage.removeItem(EVENTS_KEY);
-      }}
-    ]);
-  };
+  const resetHistoryAndEvents = () => webConfirm('איפוס יומן והיסטוריה — האם אתה בטוח?', () => {
+    historyRef.current = []; setHistory([]); setSleepEvents([]);
+    AsyncStorage.removeItem(HISTORY_KEY); AsyncStorage.removeItem(EVENTS_KEY);
+  });
 
   const avgSleepSeconds = history.length > 0 ? history.reduce((s, d) => s + d.totalSleep, 0) / history.length : 0;
   const avgSleepCount = history.length > 0 ? history.reduce((s, d) => s + d.sleepCount, 0) / history.length : 0;
-  const sleepHours = sleepEvents.filter(e => e.type === 'נרדם').map(e => parseInt(e.time.split(':')[0]));
-  const mostCommonHour = sleepHours.length > 0 ? sleepHours.sort((a, b) => sleepHours.filter(h => h === b).length - sleepHours.filter(h => h === a).length)[0] : null;
+  const sleepHoursArr = sleepEvents.filter(e => e.type === 'נרדם').map(e => parseInt(e.time.split(':')[0]));
+  const mostCommonHour = sleepHoursArr.length > 0 ? sleepHoursArr.sort((a, b) => sleepHoursArr.filter(h => h === b).length - sleepHoursArr.filter(h => h === a).length)[0] : null;
 
   const SLEEP_GOAL_SECONDS = sleepGoalHours * 3600;
   const PLAY_GOAL_SECONDS = playGoalHours * 3600;
@@ -420,7 +407,6 @@ export default function App() {
   const sleepProgress = Math.min(displayTotalSleep / SLEEP_GOAL_SECONDS, 1);
   const strokeDashoffset = CIRCUMFERENCE * (1 - sleepProgress);
   const ringColor = sleepProgress >= 1 ? '#2ecc71' : '#3498DB';
-
   const bgColor = isSleeping ? '#1a1a4e' : '#1a3a4e';
 
   if (!isLoaded) {
@@ -431,63 +417,9 @@ export default function App() {
     );
   }
 
-  const MainContent = () => (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerButtons}>
-          <TouchableOpacity onPress={() => setShowEvents(true)} style={styles.headerBtn}>
-            <Text style={styles.headerBtnText}>🕐</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowHistory(true)} style={styles.calendarBtn}>
-            <Text style={styles.calendarMonth}>{['ינו','פבר','מרץ','אפר','מאי','יוני','יולי','אוג','ספט','אוק','נוב','דצמ'][new Date().getMonth()]}</Text>
-            <Text style={styles.calendarDay}>{new Date().getDate()}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.headerBtn}>
-            <Text style={styles.headerBtnText}>⚙️</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={styles.titleBubble}>
-        <Text style={styles.titleBubbleText}>לוח השינה של מאיר שלי 👶</Text>
-      </View>
-
-      <View style={styles.statusContainer}>
-        <Text style={styles.label}>{isSleeping ? 'ישן עכשיו:' : 'חלון ערות:'}</Text>
-        <Text style={styles.mainTimer}>{isSleeping ? formatTime(displaySleepTime) : formatTime(displayWakeTime)}</Text>
-        {!isSleeping && lastSleepDuration > 0 && <Text style={styles.subText}>ישן בפעם הקודמת: {formatTime(lastSleepDuration)}</Text>}
-      </View>
-
-      <View style={styles.ringContainer}>
-        <Svg width={RING_SIZE} height={RING_SIZE} style={styles.svg}>
-          <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke="rgba(255,255,255,0.3)" strokeWidth={STROKE_WIDTH} fill="transparent" />
-          <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke={ringColor} strokeWidth={STROKE_WIDTH} fill="transparent" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={strokeDashoffset} strokeLinecap="round" rotation="-90" origin={`${RING_SIZE/2}, ${RING_SIZE/2}`} />
-        </Svg>
-        <TouchableOpacity onPress={handleSleepPress} style={[styles.mainButton, isSleeping ? styles.wakeButton : styles.sleepButton]}>
-          <Animated.View style={[sleepAnimStyle, { alignItems: 'center' }]}>
-            <Text style={styles.mainButtonText}>{isSleeping ? 'התעורר!' : 'נרדם'}</Text>
-            <Text style={styles.sleepProgressText}>{formatTime(displayTotalSleep)} / {sleepGoalHours}:00:00</Text>
-          </Animated.View>
-        </TouchableOpacity>
-      </View>
-
-      {!isSleeping && (
-        <View style={styles.playContainer}>
-          <View style={styles.playHeader}>
-            <Text style={styles.label}>סה״כ פעילות היום:</Text>
-            {playGoalHours > 0 && <Text style={styles.goalText}>מטרה: {playGoalHours} שעות</Text>}
-          </View>
-          <Text style={[styles.playTimer, displayPlayTime >= PLAY_GOAL_SECONDS && { color: '#2ecc71' }]}>{formatTime(displayPlayTime)}</Text>
-          <TouchableOpacity onPress={handlePlayPress} style={[styles.playButton, isPlaying ? styles.stopPlayButton : styles.startPlayButton]}>
-            <Animated.View style={playAnimStyle}>
-              <Text style={styles.playButtonText}>{isPlaying ? 'הפסק פעילות' : 'התחל פעילות'}</Text>
-            </Animated.View>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* יומן */}
-      <Modal visible={showEvents} animationType="slide" transparent>
+  const renderModals = () => (
+    <>
+      <Modal visible={showEvents} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>🕐 יומן שינה</Text>
@@ -509,8 +441,7 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* היסטוריה */}
-      <Modal visible={showHistory} animationType="slide" transparent>
+      <Modal visible={showHistory} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
           <ScrollView contentContainerStyle={styles.statsModalContent}>
             <View style={styles.statsBox}>
@@ -565,8 +496,7 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* הגדרות */}
-      <Modal visible={showSettings} animationType="slide" transparent>
+      <Modal visible={showSettings} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>⚙️ הגדרות</Text>
@@ -590,13 +520,72 @@ export default function App() {
           </View>
         </View>
       </Modal>
+    </>
+  );
+
+  const renderMain = () => (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity onPress={() => setShowEvents(true)} style={styles.headerBtn}>
+            <Text style={styles.headerBtnText}>🕐</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowHistory(true)} style={styles.calendarBtn}>
+            <Text style={styles.calendarMonth}>{['ינו','פבר','מרץ','אפר','מאי','יוני','יולי','אוג','ספט','אוק','נוב','דצמ'][new Date().getMonth()]}</Text>
+            <Text style={styles.calendarDay}>{new Date().getDate()}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.headerBtn}>
+            <Text style={styles.headerBtnText}>⚙️</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.titleBubble}>
+        <Text style={styles.titleBubbleText}>לוח השינה של מאיר שלי 👶</Text>
+      </View>
+
+      <View style={styles.statusContainer}>
+        <Text style={styles.label}>{isSleeping ? 'ישן עכשיו:' : 'חלון ערות:'}</Text>
+        <Text style={styles.mainTimer}>{isSleeping ? formatTime(displaySleepTime) : formatTime(displayWakeTime)}</Text>
+        {!isSleeping && lastSleepDuration > 0 && <Text style={styles.subText}>ישן בפעם הקודמת: {formatTime(lastSleepDuration)}</Text>}
+      </View>
+
+      <View style={styles.ringContainer}>
+        <Svg width={RING_SIZE} height={RING_SIZE} style={styles.svg}>
+          <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke="rgba(255,255,255,0.3)" strokeWidth={STROKE_WIDTH} fill="transparent" />
+          <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke={ringColor} strokeWidth={STROKE_WIDTH} fill="transparent" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={strokeDashoffset} strokeLinecap="round" rotation="-90" origin={`${RING_SIZE/2}, ${RING_SIZE/2}`} />
+        </Svg>
+        <TouchableOpacity onPress={handleSleepPress} style={[styles.mainButton, isSleeping ? styles.wakeButton : styles.sleepButton]}>
+          <Animated.View style={[sleepAnimStyle, { alignItems: 'center' }]}>
+            <Text style={styles.mainButtonText}>{isSleeping ? 'התעורר!' : 'נרדם'}</Text>
+            <Text style={styles.sleepProgressText}>{formatTime(displayTotalSleep)} / {sleepGoalHours}:00:00</Text>
+          </Animated.View>
+        </TouchableOpacity>
+      </View>
+
+      {!isSleeping && (
+        <View style={styles.playContainer}>
+          <View style={styles.playHeader}>
+            <Text style={styles.label}>סה״כ פעילות היום:</Text>
+            {playGoalHours > 0 && <Text style={styles.goalText}>מטרה: {playGoalHours} שעות</Text>}
+          </View>
+          <Text style={[styles.playTimer, displayPlayTime >= PLAY_GOAL_SECONDS && { color: '#2ecc71' }]}>{formatTime(displayPlayTime)}</Text>
+          <TouchableOpacity onPress={handlePlayPress} style={[styles.playButton, isPlaying ? styles.stopPlayButton : styles.startPlayButton]}>
+            <Animated.View style={playAnimStyle}>
+              <Text style={styles.playButtonText}>{isPlaying ? 'הפסק פעילות' : 'התחל פעילות'}</Text>
+            </Animated.View>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {renderModals()}
     </SafeAreaView>
   );
 
   if (Platform.OS === 'web') {
     return (
       <View style={[styles.webContainer, { backgroundColor: bgColor }]}>
-        <MainContent />
+        {renderMain()}
       </View>
     );
   }
@@ -607,7 +596,7 @@ export default function App() {
       style={styles.background} resizeMode="cover"
     >
       <View style={styles.overlay} />
-      <MainContent />
+      {renderMain()}
     </ImageBackground>
   );
 }
