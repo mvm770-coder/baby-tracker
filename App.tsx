@@ -287,6 +287,7 @@ export default function App() {
     setSleepEvents(data.events);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(data.events));
   }
+  }
 });
 return () => unsubscribe();
     
