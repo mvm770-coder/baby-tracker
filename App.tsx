@@ -280,8 +280,12 @@ export default function App() {
       }; loadState();
       const unsubscribe = onSnapshot(doc(db, 'babies', BABY_ID), (snapshot) => {
   if (snapshot.exists()) {
-    applyState(snapshot.data() as SavedState);
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot.data()));
+  const data = snapshot.data();
+  applyState(data as SavedState);
+  AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  if (data.events) {
+    setSleepEvents(data.events);
+    AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(data.events));
   }
 });
 return () => unsubscribe();
@@ -317,10 +321,11 @@ return () => unsubscribe();
     const now = new Date();
     const event: SleepEvent = { type, time: formatExactTime(now), date: now.toLocaleDateString('he-IL'), duration: duration ?? null };
     setSleepEvents(prev => {
-      const updated = [event, ...prev].slice(0, 50);
-      AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updated));
-      return updated;
-    });
+  const updated = [event, ...prev].slice(0, 50);
+  AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updated));
+  setDoc(doc(db, 'babies', BABY_ID), { events: updated }, { merge: true });
+  return updated;
+});
   };
 
   const toggleSleep = () => {
