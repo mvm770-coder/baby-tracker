@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  StyleSheet, Text, View, SafeAreaView, Platform, Alert,
+  StyleSheet, Text, View, SafeAreaView, Platform, Alert, AppState,
   ImageBackground, Modal, ScrollView, TextInput, Dimensions, TouchableOpacity
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -140,6 +140,7 @@ export default function App() {
   const resetHourRef = useRef(20);
   const isLocalUpdateRef = useRef(false);
   const historyRef = useRef<DayHistory[]>([]);
+  const sleepEventsRef = useRef<SleepEvent[]>([]);
 
   const [isSleeping, setIsSleeping] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -167,6 +168,7 @@ export default function App() {
   const [editStartTime, setEditStartTime] = useState('');
   const [manualStartTime, setManualStartTime] = useState('');
   const [manualEndTime, setManualEndTime] = useState('');
+  const [isOffline, setIsOffline] = useState(false);
   const sleepScale = useSharedValue(1);
   const sleepAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: sleepScale.value }] }));
   const playScale = useSharedValue(1);
@@ -188,7 +190,7 @@ export default function App() {
       updated = [...current];
       updated[existing] = { date, totalSleep, totalPlay, sleepCount };
     } else {
-      updated = [{ date, totalSleep, totalPlay, sleepCount }, ...current].slice(0, 7);
+      updated = [{ date, totalSleep, totalPlay, sleepCount }, ...current].slice(0, 30);
     }
     historyRef.current = updated;
     setHistory(updated);
@@ -215,11 +217,15 @@ export default function App() {
       ...extraData,
     };
     try {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  isLocalUpdateRef.current = true;
-  await setDoc(doc(db, 'babies', BABY_ID), state, { merge: true });
-  setTimeout(() => { isLocalUpdateRef.current = false; }, 2000);
-} catch (e) { console.error(e); }
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      isLocalUpdateRef.current = true;
+      await setDoc(doc(db, 'babies', BABY_ID), state, { merge: true });
+      setIsOffline(false);
+      setTimeout(() => { isLocalUpdateRef.current = false; }, 2000);
+    } catch (e) {
+      setIsOffline(true);
+      console.error(e);
+    }
   };
 
   const applyState = (state: SavedState) => {
@@ -281,7 +287,7 @@ export default function App() {
         const savedHistory = await AsyncStorage.getItem(HISTORY_KEY);
         if (savedHistory) { const h = JSON.parse(savedHistory); historyRef.current = h; setHistory(h); }
         const savedEvents = await AsyncStorage.getItem(EVENTS_KEY);
-        if (savedEvents) setSleepEvents(JSON.parse(savedEvents));
+        if (savedEvents) { const ev = JSON.parse(savedEvents); sleepEventsRef.current = ev; setSleepEvents(ev); }
       } catch (e) { console.error(e); } finally { setIsLoaded(true); }
       }; loadState();
       const unsubscribe = onSnapshot(doc(db, 'babies', BABY_ID), (snapshot) => {
@@ -290,6 +296,7 @@ export default function App() {
   applyState(data as SavedState);
   AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   if (data.events) {
+    sleepEventsRef.current = data.events;
     setSleepEvents(data.events);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(data.events));
   }
@@ -324,10 +331,20 @@ return () => unsubscribe();
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'background' || state === 'inactive') {
+        backupToFirebase(historyRef.current);
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   const addSleepEvent = async (type: 'נרדם' | 'התעורר', duration?: string) => {
     const now = new Date();
     const event: SleepEvent = { type, time: formatExactTime(now), date: now.toLocaleDateString('he-IL'), duration: duration ?? null };
-    const updated = [event, ...sleepEvents].slice(0, 50);
+    const updated = [event, ...sleepEventsRef.current].slice(0, 50);
+    sleepEventsRef.current = updated;
     setSleepEvents(updated);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updated));
     setDoc(doc(db, 'babies', BABY_ID), { events: updated }, { merge: true });
@@ -386,7 +403,8 @@ return () => unsubscribe();
     const startEvent = { type: 'נרדם' as const, time: manualStartTime, date: dateStr };
     const endEvent = { type: 'התעורר' as const, time: manualEndTime, date: dateStr, duration: formatTime(durationSeconds) };
     
-    const updatedEvents = [endEvent, startEvent, ...sleepEvents].slice(0, 50);
+    const updatedEvents = [endEvent, startEvent, ...sleepEventsRef.current].slice(0, 50);
+    sleepEventsRef.current = updatedEvents;
     setSleepEvents(updatedEvents);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
     setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true });
@@ -415,10 +433,11 @@ const confirmEditStartTime = () => {
   newStart.setHours(h, m, 0, 0);
   sleepStartTimeRef.current = newStart.getTime();
   saveState();
-  const updatedEvents = [...sleepEvents];
+  const updatedEvents = [...sleepEventsRef.current];
   const idx = updatedEvents.findIndex(e => e.type === 'נרדם');
   if (idx !== -1) {
     updatedEvents[idx] = { ...updatedEvents[idx], time: editStartTime };
+    sleepEventsRef.current = updatedEvents;
     setSleepEvents(updatedEvents);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
     setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true });
@@ -481,7 +500,7 @@ const confirmEditStartTime = () => {
   });
 
   const resetHistoryAndEvents = () => webConfirm('איפוס יומן והיסטוריה — האם אתה בטוח?', () => {
-    historyRef.current = []; setHistory([]); setSleepEvents([]);
+    historyRef.current = []; sleepEventsRef.current = []; setHistory([]); setSleepEvents([]);
     AsyncStorage.removeItem(HISTORY_KEY); AsyncStorage.removeItem(EVENTS_KEY);
     setDoc(doc(db, 'babies', BABY_ID), { events: [], history: [] }, { merge: true });
   });
@@ -489,7 +508,11 @@ const confirmEditStartTime = () => {
   const avgSleepSeconds = history.length > 0 ? history.reduce((s, d) => s + d.totalSleep, 0) / history.length : 0;
   const avgSleepCount = history.length > 0 ? history.reduce((s, d) => s + d.sleepCount, 0) / history.length : 0;
   const sleepHoursArr = sleepEvents.filter(e => e.type === 'נרדם').map(e => parseInt(e.time.split(':')[0]));
-  const mostCommonHour = sleepHoursArr.length > 0 ? sleepHoursArr.sort((a, b) => sleepHoursArr.filter(h => h === b).length - sleepHoursArr.filter(h => h === a).length)[0] : null;
+  const mostCommonHour = sleepHoursArr.length > 0
+    ? Number(Object.entries(
+        sleepHoursArr.reduce<Record<number, number>>((acc, h) => { acc[h] = (acc[h] ?? 0) + 1; return acc; }, {})
+      ).sort((a, b) => b[1] - a[1])[0][0])
+    : null;
 
   const SLEEP_GOAL_SECONDS = sleepGoalHours * 3600;
   const PLAY_GOAL_SECONDS = playGoalHours * 3600;
@@ -673,6 +696,12 @@ const confirmEditStartTime = () => {
         <Text style={styles.titleBubbleText}>לוח השינה של מאיר שלי 👶</Text>
       </View>
 
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineText}>⚠️ אין חיבור לענן — שמור מקומית</Text>
+        </View>
+      )}
+
       <View style={styles.statusContainer}>
         <Text style={styles.label}>{isSleeping ? 'ישן עכשיו:' : 'חלון ערות:'}</Text>
         <TouchableOpacity onPress={isSleeping ? editActiveStartTime : undefined}>
@@ -809,4 +838,6 @@ const styles = StyleSheet.create({
   cancelBtnView: { backgroundColor: '#f5f5f5', borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 8 },
   cancelBtnText: { color: '#666', fontSize: 15 },
   emptyHistory: { fontSize: 15, color: '#999', textAlign: 'center', marginVertical: 20, lineHeight: 24 },
+  offlineBanner: { backgroundColor: 'rgba(231,76,60,0.85)', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
+  offlineText: { color: 'white', fontSize: 13, fontWeight: 'bold' },
 });
