@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   StyleSheet, Text, View, SafeAreaView, Platform, Alert, AppState,
   ImageBackground, Modal, ScrollView, TextInput, Dimensions, TouchableOpacity
@@ -11,7 +11,6 @@ import Animated, {
 import { db } from './firebase';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 
-const BABY_ID = 'meir';
 const STORAGE_KEY = 'meir_baby_state';
 const HISTORY_KEY = 'meir_baby_history_v2';
 const EVENTS_KEY = 'meir_baby_events';
@@ -29,6 +28,7 @@ interface SavedState {
   sleepCountToday: number;
   lastDate: string;
   babyName: string;
+  babyId?: string;
   sleepGoalHours: number;
   playGoalHours: number;
   resetHour: number;
@@ -141,6 +141,7 @@ export default function App() {
   const isLocalUpdateRef = useRef(false);
   const historyRef = useRef<DayHistory[]>([]);
   const sleepEventsRef = useRef<SleepEvent[]>([]);
+  const babyIdRef = useRef('meir');
 
   const [isSleeping, setIsSleeping] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -180,7 +181,7 @@ export default function App() {
 
   const backupToFirebase = async (h: DayHistory[]) => {
     try {
-      await setDoc(doc(db, 'babies', BABY_ID), { lastBackup: new Date().toISOString(), history: h }, { merge: true });
+      await setDoc(doc(db, 'babies', babyIdRef.current), { lastBackup: new Date().toISOString(), history: h }, { merge: true });
       setIsOffline(false);
     } catch (e) { setIsOffline(true); console.error(e); }
   };
@@ -214,6 +215,7 @@ export default function App() {
       sleepCountToday: sleepCountTodayRef.current,
       lastDate: getToday(resetHourRef.current),
       babyName,
+      babyId: babyIdRef.current,
       sleepGoalHours,
       playGoalHours,
       resetHour: resetHourRef.current,
@@ -222,7 +224,7 @@ export default function App() {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       isLocalUpdateRef.current = true;
-      await setDoc(doc(db, 'babies', BABY_ID), state, { merge: true });
+      await setDoc(doc(db, 'babies', babyIdRef.current), state, { merge: true });
       setIsOffline(false);
       setTimeout(() => { isLocalUpdateRef.current = false; }, 2000);
     } catch (e) {
@@ -232,6 +234,7 @@ export default function App() {
   };
 
   const applyState = (state: SavedState) => {
+    if (state.babyId) babyIdRef.current = state.babyId;
     const rh = state.resetHour ?? 20;
     const today = getToday(rh);
     const isNewDay = state.lastDate !== today;
@@ -293,7 +296,7 @@ export default function App() {
         if (savedEvents) { const ev = JSON.parse(savedEvents); sleepEventsRef.current = ev; setSleepEvents(ev); }
       } catch (e) { console.error(e); } finally { setIsLoaded(true); }
       }; loadState();
-      const unsubscribe = onSnapshot(doc(db, 'babies', BABY_ID), (snapshot) => {
+      const unsubscribe = onSnapshot(doc(db, 'babies', babyIdRef.current), (snapshot) => {
   if (snapshot.exists() && !isLocalUpdateRef.current) {
   const data = snapshot.data();
   applyState(data as SavedState);
@@ -355,12 +358,12 @@ return () => unsubscribe();
     sleepEventsRef.current = updated;
     setSleepEvents(updated);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updated));
-    setDoc(doc(db, 'babies', BABY_ID), { events: updated }, { merge: true })
+    setDoc(doc(db, 'babies', babyIdRef.current), { events: updated }, { merge: true })
       .then(() => setIsOffline(false))
       .catch(() => setIsOffline(true));
   };
 
-  const toggleSleep = () => {
+  const toggleSleep = async () => {
     const now = Date.now();
     if (isSleepingRef.current) {
       const sleptFor = sleepStartTimeRef.current ? Math.floor((now - sleepStartTimeRef.current) / 1000) : 0;
@@ -369,7 +372,7 @@ return () => unsubscribe();
       sleepStartTimeRef.current = null; wakeStartTimeRef.current = now;
       playStartTimeRef.current = null; totalSleepTodayRef.current = newTotalSleep;
       setIsSleeping(false); setIsPlaying(false); setLastSleepDuration(sleptFor); setDisplayWakeTime(0);
-      addSleepEvent('התעורר', formatTime(sleptFor));
+      await addSleepEvent('התעורר', formatTime(sleptFor));
       saveDayToHistory(currentDateRef.current, newTotalSleep, totalPlayTodayRef.current, sleepCountTodayRef.current);
       saveState();
     } else {
@@ -377,7 +380,8 @@ return () => unsubscribe();
       isSleepingRef.current = true; sleepStartTimeRef.current = now;
       isPlayingRef.current = false; playStartTimeRef.current = null; sleepCountTodayRef.current = newCount;
       setIsSleeping(true); setIsPlaying(false); setDisplaySleepTime(0);
-      addSleepEvent('נרדם'); saveState();
+      await addSleepEvent('נרדם');
+      saveState();
     }
   };
   // הוספת שינה ידנית (מהגן)
@@ -417,7 +421,7 @@ return () => unsubscribe();
     sleepEventsRef.current = updatedEvents;
     setSleepEvents(updatedEvents);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-    setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true })
+    setDoc(doc(db, 'babies', babyIdRef.current), { events: updatedEvents }, { merge: true })
       .then(() => setIsOffline(false))
       .catch(() => setIsOffline(true));
 
@@ -452,7 +456,7 @@ const confirmEditStartTime = () => {
     sleepEventsRef.current = updatedEvents;
     setSleepEvents(updatedEvents);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-    setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true })
+    setDoc(doc(db, 'babies', babyIdRef.current), { events: updatedEvents }, { merge: true })
       .then(() => setIsOffline(false))
       .catch(() => setIsOffline(true));
   }
@@ -485,9 +489,12 @@ const confirmEditStartTime = () => {
     const newSleepGoal = parseFloat(tempSleepGoal) || 15;
     const newPlayGoal = parseFloat(tempPlayGoal) || 3;
     const newResetHour = parseInt(tempResetHour) || 20;
+    if (babyIdRef.current === 'meir' && tempBabyName !== babyName) {
+      babyIdRef.current = tempBabyName.trim().toLowerCase().replace(/\s+/g, '-') || 'baby';
+    }
     setBabyName(tempBabyName); setSleepGoalHours(newSleepGoal); setPlayGoalHours(newPlayGoal); setResetHour(newResetHour);
     resetHourRef.current = newResetHour;
-    saveState({ babyName: tempBabyName, sleepGoalHours: newSleepGoal, playGoalHours: newPlayGoal, resetHour: newResetHour });
+    saveState({ babyName: tempBabyName, babyId: babyIdRef.current, sleepGoalHours: newSleepGoal, playGoalHours: newPlayGoal, resetHour: newResetHour });
     setShowSettings(false);
   };
 
@@ -516,19 +523,22 @@ const confirmEditStartTime = () => {
   const resetHistoryAndEvents = () => webConfirm('איפוס יומן והיסטוריה — האם אתה בטוח?', () => {
     historyRef.current = []; sleepEventsRef.current = []; setHistory([]); setSleepEvents([]);
     AsyncStorage.removeItem(HISTORY_KEY); AsyncStorage.removeItem(EVENTS_KEY);
-    setDoc(doc(db, 'babies', BABY_ID), { events: [], history: [] }, { merge: true })
+    setDoc(doc(db, 'babies', babyIdRef.current), { events: [], history: [] }, { merge: true })
       .then(() => setIsOffline(false))
       .catch(() => setIsOffline(true));
   });
 
-  const avgSleepSeconds = history.length > 0 ? history.reduce((s, d) => s + d.totalSleep, 0) / history.length : 0;
-  const avgSleepCount = history.length > 0 ? history.reduce((s, d) => s + d.sleepCount, 0) / history.length : 0;
-  const sleepHoursArr = sleepEvents.filter(e => e.type === 'נרדם').map(e => parseInt(e.time.split(':')[0]));
-  const mostCommonHour = sleepHoursArr.length > 0
-    ? Number(Object.entries(
-        sleepHoursArr.reduce<Record<number, number>>((acc, h) => { acc[h] = (acc[h] ?? 0) + 1; return acc; }, {})
-      ).sort((a, b) => b[1] - a[1])[0][0])
-    : null;
+  const { avgSleepSeconds, avgSleepCount, mostCommonHour } = useMemo(() => {
+    const avgSleepSeconds = history.length > 0 ? history.reduce((s, d) => s + d.totalSleep, 0) / history.length : 0;
+    const avgSleepCount = history.length > 0 ? history.reduce((s, d) => s + d.sleepCount, 0) / history.length : 0;
+    const sleepHoursArr = sleepEvents.filter(e => e.type === 'נרדם').map(e => parseInt(e.time.split(':')[0]));
+    const mostCommonHour = sleepHoursArr.length > 0
+      ? Number(Object.entries(
+          sleepHoursArr.reduce<Record<number, number>>((acc, h) => { acc[h] = (acc[h] ?? 0) + 1; return acc; }, {})
+        ).sort((a, b) => b[1] - a[1])[0][0])
+      : null;
+    return { avgSleepSeconds, avgSleepCount, mostCommonHour };
+  }, [history, sleepEvents]);
 
   const SLEEP_GOAL_SECONDS = sleepGoalHours * 3600;
   const PLAY_GOAL_SECONDS = playGoalHours * 3600;
@@ -664,7 +674,7 @@ const confirmEditStartTime = () => {
             <TouchableOpacity onPress={addManualSleepSession} style={styles.saveBtnView}>
               <Text style={styles.saveBtnText}>הוסף ליומן ✓</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowManualAdd(false)} style={styles.cancelBtnView}>
+            <TouchableOpacity onPress={() => { setShowManualAdd(false); setManualStartTime(''); setManualEndTime(''); }} style={styles.cancelBtnView}>
               <Text style={styles.cancelBtnText}>ביטול</Text>
             </TouchableOpacity>
           </View>
@@ -709,7 +719,7 @@ const confirmEditStartTime = () => {
       </View>
 
       <View style={styles.titleBubble}>
-        <Text style={styles.titleBubbleText}>לוח השינה של מאיר שלי 👶</Text>
+        <Text style={styles.titleBubbleText}>לוח השינה של {babyName} שלי 👶</Text>
       </View>
 
       {isOffline && (
