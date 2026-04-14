@@ -6,7 +6,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Circle, Rect, Line, Text as SvgText, G } from 'react-native-svg';
 import Animated, {
-  useSharedValue, useAnimatedStyle, withSequence, withTiming
+  useSharedValue, useAnimatedStyle, withSequence, withTiming, withRepeat
 } from 'react-native-reanimated';
 import { db } from './firebase';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -18,19 +18,19 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 
 interface SavedState {
   isSleeping: boolean;
-  isPlaying: boolean;
+  isPlaying?: boolean;
   sleepStartTime: number | null;
   wakeStartTime: number | null;
-  playStartTime: number | null;
+  playStartTime?: number | null;
   lastSleepDuration: number;
-  totalPlayToday: number;
+  totalPlayToday?: number;
   totalSleepToday: number;
   sleepCountToday: number;
   lastDate: string;
   babyName: string;
   babyId?: string;
   sleepGoalHours: number;
-  playGoalHours: number;
+  playGoalHours?: number;
   resetHour: number;
 }
 
@@ -129,12 +129,9 @@ function WeeklyChart({ data, goalHours }: { data: DayHistory[], goalHours: numbe
 
 export default function App() {
   const isSleepingRef = useRef(false);
-  const isPlayingRef = useRef(false);
   const sleepStartTimeRef = useRef<number | null>(null);
   const wakeStartTimeRef = useRef<number | null>(null);
-  const playStartTimeRef = useRef<number | null>(null);
   const totalSleepTodayRef = useRef(0);
-  const totalPlayTodayRef = useRef(0);
   const sleepCountTodayRef = useRef(0);
   const currentDateRef = useRef('');
   const resetHourRef = useRef(20);
@@ -144,21 +141,17 @@ export default function App() {
   const babyIdRef = useRef('meir');
 
   const [isSleeping, setIsSleeping] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [lastSleepDuration, setLastSleepDuration] = useState(0);
   const [displaySleepTime, setDisplaySleepTime] = useState(0);
   const [displayWakeTime, setDisplayWakeTime] = useState(0);
-  const [displayPlayTime, setDisplayPlayTime] = useState(0);
   const [displayTotalSleep, setDisplayTotalSleep] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
   const [babyName, setBabyName] = useState('מאיר');
   const [sleepGoalHours, setSleepGoalHours] = useState(15);
-  const [playGoalHours, setPlayGoalHours] = useState(3);
   const [resetHour, setResetHour] = useState(20);
   const [showSettings, setShowSettings] = useState(false);
   const [tempBabyName, setTempBabyName] = useState('מאיר');
   const [tempSleepGoal, setTempSleepGoal] = useState('15');
-  const [tempPlayGoal, setTempPlayGoal] = useState('3');
   const [tempResetHour, setTempResetHour] = useState('20');
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<DayHistory[]>([]);
@@ -172,8 +165,8 @@ export default function App() {
   const [isOffline, setIsOffline] = useState(false);
   const sleepScale = useSharedValue(1);
   const sleepAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: sleepScale.value }] }));
-  const playScale = useSharedValue(1);
-  const playAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: playScale.value }] }));
+  const pulseScale = useSharedValue(1);
+  const pulseStyle = useAnimatedStyle(() => ({ transform: [{ scale: pulseScale.value }] }));
 
   const saveHistoryToStorage = async (newHistory: DayHistory[]) => {
     try { await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory)); } catch (e) { console.error(e); }
@@ -205,19 +198,15 @@ export default function App() {
   const saveState = async (extraData?: Partial<SavedState>) => {
     const state: SavedState = {
       isSleeping: isSleepingRef.current,
-      isPlaying: isPlayingRef.current,
       sleepStartTime: sleepStartTimeRef.current,
       wakeStartTime: wakeStartTimeRef.current,
-      playStartTime: playStartTimeRef.current,
       lastSleepDuration: 0,
-      totalPlayToday: totalPlayTodayRef.current,
       totalSleepToday: totalSleepTodayRef.current,
       sleepCountToday: sleepCountTodayRef.current,
       lastDate: getToday(resetHourRef.current),
       babyName,
       babyId: babyIdRef.current,
       sleepGoalHours,
-      playGoalHours,
       resetHour: resetHourRef.current,
       ...extraData,
     };
@@ -239,30 +228,23 @@ export default function App() {
     const today = getToday(rh);
     const isNewDay = state.lastDate !== today;
     const totalSleep = isNewDay ? 0 : (state.totalSleepToday ?? 0);
-    const totalPlay = isNewDay ? 0 : (state.totalPlayToday ?? 0);
     const sleepCount = isNewDay ? 0 : (state.sleepCountToday ?? 0);
 
     isSleepingRef.current = state.isSleeping;
-    isPlayingRef.current = isNewDay ? false : state.isPlaying;
     sleepStartTimeRef.current = state.sleepStartTime;
     wakeStartTimeRef.current = state.wakeStartTime;
-    playStartTimeRef.current = isNewDay ? null : state.playStartTime;
     totalSleepTodayRef.current = totalSleep;
-    totalPlayTodayRef.current = totalPlay;
     sleepCountTodayRef.current = sleepCount;
     currentDateRef.current = today;
     resetHourRef.current = rh;
 
     setIsSleeping(state.isSleeping);
-    setIsPlaying(isNewDay ? false : state.isPlaying);
     setLastSleepDuration(state.lastSleepDuration);
     setBabyName(state.babyName ?? 'מאיר');
     setSleepGoalHours(state.sleepGoalHours ?? 15);
-    setPlayGoalHours(state.playGoalHours ?? 3);
     setResetHour(rh);
     setTempBabyName(state.babyName ?? 'מאיר');
     setTempSleepGoal(String(state.sleepGoalHours ?? 15));
-    setTempPlayGoal(String(state.playGoalHours ?? 3));
     setTempResetHour(String(rh));
 
     const now = Date.now();
@@ -274,13 +256,8 @@ export default function App() {
       setDisplayTotalSleep(totalSleep);
     }
     if (!state.isSleeping && state.wakeStartTime) setDisplayWakeTime(Math.floor((now - state.wakeStartTime) / 1000));
-    if (!isNewDay && state.isPlaying && state.playStartTime) {
-      setDisplayPlayTime(totalPlay + Math.floor((now - state.playStartTime) / 1000));
-    } else {
-      setDisplayPlayTime(totalPlay);
-    }
     if (isNewDay && state.totalSleepToday > 0) {
-      saveDayToHistory(state.lastDate, state.totalSleepToday, state.totalPlayToday, state.sleepCountToday ?? 0);
+      saveDayToHistory(state.lastDate, state.totalSleepToday, state.totalPlayToday ?? 0, state.sleepCountToday ?? 0);
     }
   };
 
@@ -323,12 +300,12 @@ return () => unsubscribe();
       const now = Date.now();
       const today = getToday(resetHourRef.current);
       if (today !== currentDateRef.current && currentDateRef.current !== '') {
-        const updated = saveDayToHistory(currentDateRef.current, totalSleepTodayRef.current, totalPlayTodayRef.current, sleepCountTodayRef.current);
+        const updated = saveDayToHistory(currentDateRef.current, totalSleepTodayRef.current, 0, sleepCountTodayRef.current);
         backupToFirebase(updated);
         currentDateRef.current = today;
-        totalSleepTodayRef.current = 0; totalPlayTodayRef.current = 0; sleepCountTodayRef.current = 0;
-        isSleepingRef.current = false; isPlayingRef.current = false; playStartTimeRef.current = null;
-        setIsSleeping(false); setIsPlaying(false); setDisplayTotalSleep(0); setDisplayPlayTime(0);
+        totalSleepTodayRef.current = 0; sleepCountTodayRef.current = 0;
+        isSleepingRef.current = false;
+        setIsSleeping(false); setDisplayTotalSleep(0);
         return;
       }
       if (isSleepingRef.current && sleepStartTimeRef.current) {
@@ -337,7 +314,6 @@ return () => unsubscribe();
         setDisplayTotalSleep(totalSleepTodayRef.current + currentSleep);
       }
       if (!isSleepingRef.current && wakeStartTimeRef.current) setDisplayWakeTime(Math.floor((now - wakeStartTimeRef.current) / 1000));
-      if (isPlayingRef.current && playStartTimeRef.current) setDisplayPlayTime(totalPlayTodayRef.current + Math.floor((now - playStartTimeRef.current) / 1000));
     }, 1000);
     return () => clearInterval(interval);
   }, []);
@@ -368,18 +344,20 @@ return () => unsubscribe();
     if (isSleepingRef.current) {
       const sleptFor = sleepStartTimeRef.current ? Math.floor((now - sleepStartTimeRef.current) / 1000) : 0;
       const newTotalSleep = totalSleepTodayRef.current + sleptFor;
-      isSleepingRef.current = false; isPlayingRef.current = false;
+      isSleepingRef.current = false;
       sleepStartTimeRef.current = null; wakeStartTimeRef.current = now;
-      playStartTimeRef.current = null; totalSleepTodayRef.current = newTotalSleep;
-      setIsSleeping(false); setIsPlaying(false); setLastSleepDuration(sleptFor); setDisplayWakeTime(0);
+      totalSleepTodayRef.current = newTotalSleep;
+      setIsSleeping(false); setLastSleepDuration(sleptFor); setDisplayWakeTime(0);
+      pulseScale.value = withTiming(1, { duration: 200 });
       await addSleepEvent('התעורר', formatTime(sleptFor));
-      saveDayToHistory(currentDateRef.current, newTotalSleep, totalPlayTodayRef.current, sleepCountTodayRef.current);
+      saveDayToHistory(currentDateRef.current, newTotalSleep, 0, sleepCountTodayRef.current);
       saveState();
     } else {
       const newCount = sleepCountTodayRef.current + 1;
       isSleepingRef.current = true; sleepStartTimeRef.current = now;
-      isPlayingRef.current = false; playStartTimeRef.current = null; sleepCountTodayRef.current = newCount;
-      setIsSleeping(true); setIsPlaying(false); setDisplaySleepTime(0);
+      sleepCountTodayRef.current = newCount;
+      setIsSleeping(true); setDisplaySleepTime(0);
+      pulseScale.value = withRepeat(withSequence(withTiming(1.08, { duration: 900 }), withTiming(1, { duration: 900 })), -1, false);
       await addSleepEvent('נרדם');
       saveState();
     }
@@ -462,62 +440,39 @@ const confirmEditStartTime = () => {
   }
   setShowEditStart(false);
 };
-  const togglePlay = () => {
-    const now = Date.now();
-    if (isPlayingRef.current) {
-      const sessionTime = playStartTimeRef.current ? Math.floor((now - playStartTimeRef.current) / 1000) : 0;
-      const newTotal = totalPlayTodayRef.current + sessionTime;
-      totalPlayTodayRef.current = newTotal; playStartTimeRef.current = null; isPlayingRef.current = false;
-      setIsPlaying(false); setDisplayPlayTime(newTotal);
-    } else {
-      playStartTimeRef.current = now; isPlayingRef.current = true; setIsPlaying(true);
-    }
-    saveState();
-  };
-
   const handleSleepPress = () => {
     sleepScale.value = withSequence(withTiming(0.94, { duration: 80 }), withTiming(1, { duration: 80 }));
     toggleSleep();
   };
 
-  const handlePlayPress = () => {
-    playScale.value = withSequence(withTiming(0.94, { duration: 80 }), withTiming(1, { duration: 80 }));
-    togglePlay();
-  };
-
   const saveSettings = () => {
     const newSleepGoal = parseFloat(tempSleepGoal) || 15;
-    const newPlayGoal = parseFloat(tempPlayGoal) || 3;
     const newResetHour = parseInt(tempResetHour) || 20;
     if (babyIdRef.current === 'meir' && tempBabyName !== babyName) {
       babyIdRef.current = tempBabyName.trim().toLowerCase().replace(/\s+/g, '-') || 'baby';
     }
-    setBabyName(tempBabyName); setSleepGoalHours(newSleepGoal); setPlayGoalHours(newPlayGoal); setResetHour(newResetHour);
+    setBabyName(tempBabyName); setSleepGoalHours(newSleepGoal); setResetHour(newResetHour);
     resetHourRef.current = newResetHour;
-    saveState({ babyName: tempBabyName, babyId: babyIdRef.current, sleepGoalHours: newSleepGoal, playGoalHours: newPlayGoal, resetHour: newResetHour });
+    saveState({ babyName: tempBabyName, babyId: babyIdRef.current, sleepGoalHours: newSleepGoal, resetHour: newResetHour });
     setShowSettings(false);
   };
 
   const resetAll = () => webConfirm('איפוס כל הנתונים — האם אתה בטוח?', () => {
-    isSleepingRef.current = false; isPlayingRef.current = false;
+    isSleepingRef.current = false;
     sleepStartTimeRef.current = null; wakeStartTimeRef.current = null;
-    playStartTimeRef.current = null; totalSleepTodayRef.current = 0;
-    totalPlayTodayRef.current = 0; sleepCountTodayRef.current = 0;
-    setIsSleeping(false); setIsPlaying(false); setLastSleepDuration(0);
-    setDisplaySleepTime(0); setDisplayWakeTime(0); setDisplayPlayTime(0); setDisplayTotalSleep(0);
+    totalSleepTodayRef.current = 0; sleepCountTodayRef.current = 0;
+    pulseScale.value = withTiming(1, { duration: 200 });
+    setIsSleeping(false); setLastSleepDuration(0);
+    setDisplaySleepTime(0); setDisplayWakeTime(0); setDisplayTotalSleep(0);
     saveState();
   });
 
   const resetSleep = () => webConfirm('איפוס נתוני שינה — האם אתה בטוח?', () => {
     isSleepingRef.current = false; sleepStartTimeRef.current = null;
     totalSleepTodayRef.current = 0; sleepCountTodayRef.current = 0;
+    pulseScale.value = withTiming(1, { duration: 200 });
     setIsSleeping(false); setLastSleepDuration(0); setDisplaySleepTime(0); setDisplayTotalSleep(0);
     saveState();
-  });
-
-  const resetPlay = () => webConfirm('איפוס נתוני פעילות — האם אתה בטוח?', () => {
-    isPlayingRef.current = false; playStartTimeRef.current = null; totalPlayTodayRef.current = 0;
-    setIsPlaying(false); setDisplayPlayTime(0); saveState();
   });
 
   const resetHistoryAndEvents = () => webConfirm('איפוס יומן והיסטוריה — האם אתה בטוח?', () => {
@@ -541,7 +496,6 @@ const confirmEditStartTime = () => {
   }, [history, sleepEvents]);
 
   const SLEEP_GOAL_SECONDS = sleepGoalHours * 3600;
-  const PLAY_GOAL_SECONDS = playGoalHours * 3600;
   const RING_SIZE = 220;
   const STROKE_WIDTH = 12;
   const RADIUS = (RING_SIZE - STROKE_WIDTH) / 2;
@@ -647,13 +601,10 @@ const confirmEditStartTime = () => {
               <TextInput style={styles.input} value={tempBabyName} onChangeText={setTempBabyName} placeholder="שם התינוק" />
               <Text style={styles.settingLabel}>מטרת שינה יומית (שעות)</Text>
               <TextInput style={styles.input} value={tempSleepGoal} onChangeText={setTempSleepGoal} keyboardType="numeric" placeholder="15" />
-              <Text style={styles.settingLabel}>מטרת פעילות יומית (שעות)</Text>
-              <TextInput style={styles.input} value={tempPlayGoal} onChangeText={setTempPlayGoal} keyboardType="numeric" placeholder="3" />
               <Text style={styles.settingLabel}>שעת איפוס יומי (0-23)</Text>
               <TextInput style={styles.input} value={tempResetHour} onChangeText={setTempResetHour} keyboardType="numeric" placeholder="20" />
               <Text style={styles.sectionTitle}>איפוס נתונים</Text>
               <TouchableOpacity onPress={resetSleep} style={styles.resetBtnView}><Text style={styles.resetBtnText}>איפוס נתוני שינה בלבד</Text></TouchableOpacity>
-              <TouchableOpacity onPress={resetPlay} style={styles.resetBtnView}><Text style={styles.resetBtnText}>איפוס נתוני פעילות בלבד</Text></TouchableOpacity>
               <TouchableOpacity onPress={resetHistoryAndEvents} style={[styles.resetBtnView, styles.resetAllBtnView]}><Text style={styles.resetBtnText}>איפוס יומן והיסטוריה</Text></TouchableOpacity>
               <TouchableOpacity onPress={resetAll} style={[styles.resetBtnView, styles.resetAllBtnView]}><Text style={styles.resetBtnText}>איפוס כל הנתונים</Text></TouchableOpacity>
               <TouchableOpacity onPress={saveSettings} style={styles.saveBtnView}><Text style={styles.saveBtnText}>שמור הגדרות ✓</Text></TouchableOpacity>
@@ -735,7 +686,12 @@ const confirmEditStartTime = () => {
             {isSleeping ? formatTime(displaySleepTime) : formatTime(displayWakeTime)}
           </Text>
         </TouchableOpacity>
-        {!isSleeping && lastSleepDuration > 0 && <Text style={styles.subText}>ישן בפעם הקודמת: {formatTime(lastSleepDuration)}</Text>}
+        {!isSleeping && lastSleepDuration > 0 && (
+          <View style={styles.lastSleepCard}>
+            <Text style={styles.lastSleepLabel}>😴 שינה קודמת</Text>
+            <Text style={styles.lastSleepTime}>{formatTime(lastSleepDuration)}</Text>
+          </View>
+        )}
         {isSleeping && <Text style={{color: 'rgba(255,255,255,0.5)', fontSize: 12}}>לחץ על השעון לעריכת שעת התחלה</Text>}
       </View>
 
@@ -744,28 +700,16 @@ const confirmEditStartTime = () => {
           <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke="rgba(255,255,255,0.3)" strokeWidth={STROKE_WIDTH} fill="transparent" />
           <Circle cx={RING_SIZE/2} cy={RING_SIZE/2} r={RADIUS} stroke={ringColor} strokeWidth={STROKE_WIDTH} fill="transparent" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={strokeDashoffset} strokeLinecap="round" rotation="-90" origin={`${RING_SIZE/2}, ${RING_SIZE/2}`} />
         </Svg>
-        <TouchableOpacity onPress={handleSleepPress} style={[styles.mainButton, isSleeping ? styles.wakeButton : styles.sleepButton]}>
-          <Animated.View style={[sleepAnimStyle, { alignItems: 'center' }]}>
-            <Text style={styles.mainButtonText}>{isSleeping ? 'התעורר!' : 'נרדם'}</Text>
-            <Text style={styles.sleepProgressText}>{formatTime(displayTotalSleep)} / {sleepGoalHours}:00:00</Text>
-          </Animated.View>
-        </TouchableOpacity>
-      </View>
-
-      {!isSleeping && (
-        <View style={styles.playContainer}>
-          <View style={styles.playHeader}>
-            <Text style={styles.label}>סה״כ פעילות היום:</Text>
-            {playGoalHours > 0 && <Text style={styles.goalText}>מטרה: {playGoalHours} שעות</Text>}
-          </View>
-          <Text style={[styles.playTimer, displayPlayTime >= PLAY_GOAL_SECONDS && { color: '#2ecc71' }]}>{formatTime(displayPlayTime)}</Text>
-          <TouchableOpacity onPress={handlePlayPress} style={[styles.playButton, isPlaying ? styles.stopPlayButton : styles.startPlayButton]}>
-            <Animated.View style={playAnimStyle}>
-              <Text style={styles.playButtonText}>{isPlaying ? 'הפסק פעילות' : 'התחל פעילות'}</Text>
+        <Animated.View style={pulseStyle}>
+          <TouchableOpacity onPress={handleSleepPress} style={[styles.mainButton, isSleeping ? styles.wakeButton : styles.sleepButton]}>
+            <Animated.View style={[sleepAnimStyle, { alignItems: 'center' }]}>
+              <Text style={styles.mainButtonText}>{isSleeping ? 'התעורר!' : 'נרדם'}</Text>
+              <Text style={styles.sleepProgressText}>{formatTime(displayTotalSleep)} / {sleepGoalHours}:00:00</Text>
             </Animated.View>
           </TouchableOpacity>
-        </View>
-      )}
+        </Animated.View>
+      </View>
+
 
       {renderModals()}
     </SafeAreaView>
@@ -866,4 +810,7 @@ const styles = StyleSheet.create({
   emptyHistory: { fontSize: 15, color: '#999', textAlign: 'center', marginVertical: 20, lineHeight: 24 },
   offlineBanner: { backgroundColor: 'rgba(231,76,60,0.85)', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
   offlineText: { color: 'white', fontSize: 13, fontWeight: 'bold' },
+  lastSleepCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginTop: 8 },
+  lastSleepLabel: { fontSize: 13, color: 'rgba(255,255,255,0.7)' },
+  lastSleepTime: { fontSize: 18, fontWeight: 'bold', color: 'white' },
 });
