@@ -179,7 +179,10 @@ export default function App() {
   };
 
   const backupToFirebase = async (h: DayHistory[]) => {
-    try { await setDoc(doc(db, 'babies', BABY_ID), { lastBackup: new Date().toISOString(), history: h }, { merge: true }); } catch (e) { console.error(e); }
+    try {
+      await setDoc(doc(db, 'babies', BABY_ID), { lastBackup: new Date().toISOString(), history: h }, { merge: true });
+      setIsOffline(false);
+    } catch (e) { setIsOffline(true); console.error(e); }
   };
 
   const saveDayToHistory = (date: string, totalSleep: number, totalPlay: number, sleepCount: number) => {
@@ -300,6 +303,11 @@ export default function App() {
     setSleepEvents(data.events);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(data.events));
   }
+  if (data.history) {
+    historyRef.current = data.history;
+    setHistory(data.history);
+    AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(data.history));
+  }
   }
 });
 return () => unsubscribe();
@@ -347,7 +355,9 @@ return () => unsubscribe();
     sleepEventsRef.current = updated;
     setSleepEvents(updated);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updated));
-    setDoc(doc(db, 'babies', BABY_ID), { events: updated }, { merge: true });
+    setDoc(doc(db, 'babies', BABY_ID), { events: updated }, { merge: true })
+      .then(() => setIsOffline(false))
+      .catch(() => setIsOffline(true));
   };
 
   const toggleSleep = () => {
@@ -407,7 +417,9 @@ return () => unsubscribe();
     sleepEventsRef.current = updatedEvents;
     setSleepEvents(updatedEvents);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-    setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true });
+    setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true })
+      .then(() => setIsOffline(false))
+      .catch(() => setIsOffline(true));
 
     saveState();
     setShowManualAdd(false);
@@ -440,7 +452,9 @@ const confirmEditStartTime = () => {
     sleepEventsRef.current = updatedEvents;
     setSleepEvents(updatedEvents);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-    setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true });
+    setDoc(doc(db, 'babies', BABY_ID), { events: updatedEvents }, { merge: true })
+      .then(() => setIsOffline(false))
+      .catch(() => setIsOffline(true));
   }
   setShowEditStart(false);
 };
@@ -502,7 +516,9 @@ const confirmEditStartTime = () => {
   const resetHistoryAndEvents = () => webConfirm('איפוס יומן והיסטוריה — האם אתה בטוח?', () => {
     historyRef.current = []; sleepEventsRef.current = []; setHistory([]); setSleepEvents([]);
     AsyncStorage.removeItem(HISTORY_KEY); AsyncStorage.removeItem(EVENTS_KEY);
-    setDoc(doc(db, 'babies', BABY_ID), { events: [], history: [] }, { merge: true });
+    setDoc(doc(db, 'babies', BABY_ID), { events: [], history: [] }, { merge: true })
+      .then(() => setIsOffline(false))
+      .catch(() => setIsOffline(true));
   });
 
   const avgSleepSeconds = history.length > 0 ? history.reduce((s, d) => s + d.totalSleep, 0) / history.length : 0;
