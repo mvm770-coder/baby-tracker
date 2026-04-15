@@ -71,6 +71,12 @@ const formatHoursDecimal = (seconds: number) => (seconds / 3600).toFixed(1);
 const formatExactTime = (date: Date) =>
   `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
+const eventSortKey = (e: { date: string; time: string }) => {
+  const [day, month, year] = e.date.split('.').map(Number);
+  const [hours, minutes] = e.time.split(':').map(Number);
+  return new Date(year, month - 1, day, hours, minutes).getTime();
+};
+
 const formatDateShort = (dateStr: string) => {
   const d = new Date(dateStr);
   return ["א'","ב'","ג'","ד'","ה'","ו'","ש'"][d.getDay()];
@@ -395,7 +401,9 @@ return () => unsubscribe();
     const startEvent = { type: 'נרדם' as const, time: manualStartTime, date: dateStr };
     const endEvent = { type: 'התעורר' as const, time: manualEndTime, date: dateStr, duration: formatTime(durationSeconds) };
     
-    const updatedEvents = [endEvent, startEvent, ...sleepEventsRef.current].slice(0, 50);
+    const updatedEvents = [endEvent, startEvent, ...sleepEventsRef.current]
+      .sort((a, b) => eventSortKey(b) - eventSortKey(a))
+      .slice(0, 50);
     sleepEventsRef.current = updatedEvents;
     setSleepEvents(updatedEvents);
     AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
