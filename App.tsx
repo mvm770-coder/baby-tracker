@@ -358,7 +358,7 @@ return () => unsubscribe();
       sleepStartTimeRef.current = null; wakeStartTimeRef.current = now;
       totalSleepTodayRef.current = newTotalSleep;
       setIsSleeping(false); setLastSleepDuration(sleptFor); setDisplayWakeTime(0);
-      pulseScale.value = withTiming(1, { duration: 200 });
+      pulseScale.value = withSequence(withTiming(1.2, { duration: 150 }), withTiming(1, { duration: 250 }));
       await addSleepEvent('התעורר', formatTime(sleptFor));
       saveDayToHistory(currentDateRef.current, newTotalSleep, 0, sleepCountTodayRef.current);
       saveState();
@@ -791,13 +791,15 @@ const confirmEditStartTime = () => {
             {isSleeping ? formatTime(displaySleepTime) : formatTime(displayWakeTime)}
           </Text>
         </TouchableOpacity>
-        {!isSleeping && lastSleepDuration > 0 && (
-          <View style={styles.lastSleepCard}>
-            <Text style={styles.lastSleepLabel}>😴 שינה קודמת</Text>
-            <Text style={styles.lastSleepTime}>{formatTime(lastSleepDuration)}</Text>
-          </View>
-        )}
-        {isSleeping && <Text style={{color: 'rgba(255,255,255,0.5)', fontSize: 12}}>לחץ על השעון לעריכת שעת התחלה</Text>}
+        <View style={styles.statusDynamic}>
+          {!isSleeping && lastSleepDuration > 0 && (
+            <View style={styles.lastSleepCard}>
+              <Text style={styles.lastSleepLabel}>😴 שינה קודמת</Text>
+              <Text style={styles.lastSleepTime}>{formatTime(lastSleepDuration)}</Text>
+            </View>
+          )}
+          {isSleeping && <Text style={{color: 'rgba(255,255,255,0.5)', fontSize: 12}}>לחץ על השעון לעריכת שעת התחלה</Text>}
+        </View>
       </View>
 
       <View style={styles.ringContainer}>
@@ -915,7 +917,8 @@ const styles = StyleSheet.create({
   emptyHistory: { fontSize: 15, color: '#999', textAlign: 'center', marginVertical: 20, lineHeight: 24 },
   offlineBanner: { backgroundColor: 'rgba(231,76,60,0.85)', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 8 },
   offlineText: { color: 'white', fontSize: 13, fontWeight: 'bold' },
-  lastSleepCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginTop: 8 },
+  statusDynamic: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  lastSleepCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8 },
   lastSleepLabel: { fontSize: 13, color: 'rgba(255,255,255,0.7)' },
   lastSleepTime: { fontSize: 18, fontWeight: 'bold', color: 'white' },
   eventActionBtn: { padding: 6, marginLeft: 2 },
