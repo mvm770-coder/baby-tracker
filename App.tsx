@@ -367,7 +367,7 @@ return () => unsubscribe();
       isSleepingRef.current = true; sleepStartTimeRef.current = now;
       sleepCountTodayRef.current = newCount;
       setIsSleeping(true); setDisplaySleepTime(0);
-      pulseScale.value = withRepeat(withSequence(withTiming(1.08, { duration: 900 }), withTiming(1, { duration: 900 })), -1, false);
+      pulseScale.value = withRepeat(withSequence(withTiming(1.08, { duration: 900 }), withTiming(1, { duration: 900 })), 3, false);
       await addSleepEvent('נרדם');
       saveState();
     }
