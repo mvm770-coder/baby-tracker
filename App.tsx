@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  StyleSheet, Text, View, SafeAreaView, Platform, Alert, AppState,
+  StyleSheet, Text, View, SafeAreaView, Platform, Alert, AppState, Share,
   ImageBackground, Modal, ScrollView, TextInput, Dimensions, TouchableOpacity
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -169,6 +169,10 @@ export default function App() {
   const [manualStartTime, setManualStartTime] = useState('');
   const [manualEndTime, setManualEndTime] = useState('');
   const [isOffline, setIsOffline] = useState(false);
+  const [showEditEvent, setShowEditEvent] = useState(false);
+  const [editEventIndex, setEditEventIndex] = useState(-1);
+  const [editEventTime, setEditEventTime] = useState('');
+  const [manualDate, setManualDate] = useState('');
   const sleepScale = useSharedValue(1);
   const sleepAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: sleepScale.value }] }));
   const pulseScale = useSharedValue(1);
@@ -376,31 +380,46 @@ return () => unsubscribe();
       return;
     }
 
-    const now = new Date();
+    // Parse session date
+    let sessionDate: Date;
+    if (manualDate && /^\d{1,2}\.\d{1,2}\.\d{4}$/.test(manualDate)) {
+      const [d, m, y] = manualDate.split('.').map(Number);
+      sessionDate = new Date(y, m - 1, d);
+    } else {
+      sessionDate = new Date();
+    }
+
     const [startH, startM] = manualStartTime.split(':').map(Number);
     const [endH, endM] = manualEndTime.split(':').map(Number);
-    
-    const startDate = new Date(now);
+
+    const startDate = new Date(sessionDate);
     startDate.setHours(startH, startM, 0, 0);
-    
-    const endDate = new Date(now);
+    const endDate = new Date(sessionDate);
     endDate.setHours(endH, endM, 0, 0);
 
     let durationSeconds = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
-    if (durationSeconds < 0) durationSeconds += 24 * 3600; // אם גלש ליום הבא
+    if (durationSeconds < 0) durationSeconds += 24 * 3600;
 
-    const newTotalSleep = totalSleepTodayRef.current + durationSeconds;
-    const newCount = sleepCountTodayRef.current + 1;
-    totalSleepTodayRef.current = newTotalSleep;
-    sleepCountTodayRef.current = newCount;
-    
-    setDisplayTotalSleep(newTotalSleep);
-    setLastSleepDuration(durationSeconds);
+    const dateStr = sessionDate.toLocaleDateString('he-IL');
+    const historyDateStr = sessionDate.toDateString();
+    const isToday = historyDateStr === currentDateRef.current;
 
-    const dateStr = now.toLocaleDateString('he-IL');
+    if (isToday) {
+      const newTotalSleep = totalSleepTodayRef.current + durationSeconds;
+      const newCount = sleepCountTodayRef.current + 1;
+      totalSleepTodayRef.current = newTotalSleep;
+      sleepCountTodayRef.current = newCount;
+      setDisplayTotalSleep(newTotalSleep);
+      setLastSleepDuration(durationSeconds);
+      saveDayToHistory(historyDateStr, newTotalSleep, 0, newCount);
+    } else {
+      const existing = historyRef.current.find(d => d.date === historyDateStr);
+      saveDayToHistory(historyDateStr, (existing?.totalSleep ?? 0) + durationSeconds, 0, (existing?.sleepCount ?? 0) + 1);
+    }
+
     const startEvent = { type: 'נרדם' as const, time: manualStartTime, date: dateStr };
     const endEvent = { type: 'התעורר' as const, time: manualEndTime, date: dateStr, duration: formatTime(durationSeconds) };
-    
+
     const updatedEvents = [endEvent, startEvent, ...sleepEventsRef.current]
       .sort((a, b) => eventSortKey(b) - eventSortKey(a))
       .slice(0, 50);
@@ -415,6 +434,51 @@ return () => unsubscribe();
     setShowManualAdd(false);
     setManualStartTime('');
     setManualEndTime('');
+    setManualDate('');
+  };
+
+  const deleteEvent = (index: number) => {
+    const updated = sleepEventsRef.current.filter((_, i) => i !== index);
+    sleepEventsRef.current = updated;
+    setSleepEvents(updated);
+    AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updated));
+    setDoc(doc(db, 'babies', babyIdRef.current), { events: updated }, { merge: true })
+      .then(() => setIsOffline(false))
+      .catch(() => setIsOffline(true));
+  };
+
+  const confirmEditEvent = () => {
+    if (!/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(editEventTime)) {
+      alert('פורמט לא תקין — נסה שוב (לדוגמה 14:30)');
+      return;
+    }
+    const updated = [...sleepEventsRef.current];
+    updated[editEventIndex] = { ...updated[editEventIndex], time: editEventTime };
+    updated.sort((a, b) => eventSortKey(b) - eventSortKey(a));
+    sleepEventsRef.current = updated;
+    setSleepEvents(updated);
+    AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updated));
+    setDoc(doc(db, 'babies', babyIdRef.current), { events: updated }, { merge: true })
+      .then(() => setIsOffline(false))
+      .catch(() => setIsOffline(true));
+    setShowEditEvent(false);
+  };
+
+  const shareDaySummary = async () => {
+    const totalStr = formatTime(displayTotalSleep);
+    const pct = Math.round((displayTotalSleep / (sleepGoalHours * 3600)) * 100);
+    const count = sleepCountTodayRef.current;
+    const dateStr = new Date().toLocaleDateString('he-IL');
+    const text = `📊 דוח שינה של ${babyName} — ${dateStr}\n\n😴 סה"כ שינה: ${totalStr}\n🎯 מטרה: ${sleepGoalHours}:00:00 (${pct}%)\n💤 מספר שינות: ${count}`;
+    if (Platform.OS === 'web') {
+      if ((navigator as any).share) {
+        (navigator as any).share({ text });
+      } else {
+        (navigator as any).clipboard?.writeText(text).then(() => alert('הטקסט הועתק ללוח!'));
+      }
+    } else {
+      Share.share({ message: text });
+    }
   };
 
   // עריכת זמן התחלה של שינה פעילה
@@ -531,9 +595,17 @@ const confirmEditStartTime = () => {
               <ScrollView style={{ maxHeight: 400 }}>
                 {sleepEvents.map((event, i) => (
                   <View key={i} style={[styles.eventRow, { borderRightWidth: 4, borderRightColor: event.type === 'נרדם' ? '#3498DB' : '#F1C40F' }]}>
-                    <Text style={styles.eventType}>{event.type === 'נרדם' ? '😴 נרדם' : `☀️ התעורר${event.duration ? ` — ${event.duration}` : ''}`}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.eventType}>{event.type === 'נרדם' ? '😴 נרדם' : `☀️ התעורר${event.duration ? ` — ${event.duration}` : ''}`}</Text>
+                      <Text style={styles.eventDate}>{event.date}</Text>
+                    </View>
                     <Text style={styles.eventTime}>{event.time}</Text>
-                    <Text style={styles.eventDate}>{event.date}</Text>
+                    <TouchableOpacity onPress={() => { setEditEventIndex(i); setEditEventTime(event.time); setShowEditEvent(true); }} style={styles.eventActionBtn}>
+                      <Text style={{ fontSize: 15 }}>✏️</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => webConfirm('למחוק אירוע זה?', () => deleteEvent(i))} style={styles.eventActionBtn}>
+                      <Text style={{ fontSize: 15 }}>🗑️</Text>
+                    </TouchableOpacity>
                   </View>
                 ))}
               </ScrollView>
@@ -624,16 +696,32 @@ const confirmEditStartTime = () => {
       <Modal visible={showManualAdd} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>➕ הוספת שינה מוקדמת</Text>
+            <Text style={styles.modalTitle}>➕ הוספת שינה ידנית</Text>
+            <Text style={styles.settingLabel}>תאריך (לדוגמה 14.04.2026):</Text>
+            <TextInput style={styles.input} value={manualDate} onChangeText={setManualDate} placeholder="DD.MM.YYYY" maxLength={10} />
             <Text style={styles.settingLabel}>שעת הירדמות (לדוגמה 13:00):</Text>
             <TextInput style={styles.input} value={manualStartTime} onChangeText={setManualStartTime} placeholder="HH:MM" maxLength={5} />
             <Text style={styles.settingLabel}>שעת יקיצה (לדוגמה 14:30):</Text>
             <TextInput style={styles.input} value={manualEndTime} onChangeText={setManualEndTime} placeholder="HH:MM" maxLength={5} />
-            
             <TouchableOpacity onPress={addManualSleepSession} style={styles.saveBtnView}>
               <Text style={styles.saveBtnText}>הוסף ליומן ✓</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setShowManualAdd(false); setManualStartTime(''); setManualEndTime(''); }} style={styles.cancelBtnView}>
+            <TouchableOpacity onPress={() => { setShowManualAdd(false); setManualStartTime(''); setManualEndTime(''); setManualDate(''); }} style={styles.cancelBtnView}>
+              <Text style={styles.cancelBtnText}>ביטול</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={showEditEvent} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>✏️ עריכת שעת אירוע</Text>
+            <Text style={styles.settingLabel}>שעה (לדוגמה 14:30):</Text>
+            <TextInput style={styles.input} value={editEventTime} onChangeText={setEditEventTime} placeholder="HH:MM" maxLength={5} />
+            <TouchableOpacity onPress={confirmEditEvent} style={styles.saveBtnView}>
+              <Text style={styles.saveBtnText}>שמור ✓</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowEditEvent(false)} style={styles.cancelBtnView}>
               <Text style={styles.cancelBtnText}>ביטול</Text>
             </TouchableOpacity>
           </View>
@@ -661,7 +749,16 @@ const confirmEditStartTime = () => {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerButtons}>
-          <TouchableOpacity onPress={() => setShowManualAdd(true)} style={styles.headerBtn}>
+          <TouchableOpacity onPress={shareDaySummary} style={styles.headerBtn}>
+            <Text style={styles.headerBtnText}>📤</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => {
+            const today = new Date();
+            const dd = String(today.getDate()).padStart(2, '0');
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            setManualDate(`${dd}.${mm}.${today.getFullYear()}`);
+            setShowManualAdd(true);
+          }} style={styles.headerBtn}>
             <Text style={styles.headerBtnText}>✍️</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setShowEvents(true)} style={styles.headerBtn}>
@@ -821,4 +918,5 @@ const styles = StyleSheet.create({
   lastSleepCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginTop: 8 },
   lastSleepLabel: { fontSize: 13, color: 'rgba(255,255,255,0.7)' },
   lastSleepTime: { fontSize: 18, fontWeight: 'bold', color: 'white' },
+  eventActionBtn: { padding: 6, marginLeft: 2 },
 });
